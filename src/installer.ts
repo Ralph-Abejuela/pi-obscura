@@ -249,9 +249,16 @@ async function runInstall(options: InstallOptions): Promise<InstallReport> {
 
     // AC-4: extract with the OS tar into the same volume temp folder.
     try {
-      const tar = await runCommand("tar", ["-xf", archivePath, "-C", tempDir], EXTRACT_TIMEOUT_MS, options.signal);
+      const tar = await runCommand(
+        "tar",
+        ["-xf", archivePath, "-C", tempDir],
+        EXTRACT_TIMEOUT_MS,
+        options.signal,
+      );
       if (tar.code !== 0) {
-        throw new Error(`tar exited with code ${tar.code}${tar.stderr.trim() ? `: ${tar.stderr.trim()}` : ""}`);
+        throw new Error(
+          `tar exited with code ${tar.code}${tar.stderr.trim() ? `: ${tar.stderr.trim()}` : ""}`,
+        );
       }
     } catch (error) {
       throw new InstallError(

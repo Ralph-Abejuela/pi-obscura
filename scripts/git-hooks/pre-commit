@@ -1,0 +1,7 @@
+#!/bin/sh
+# Pre-commit gate (AGENTS.md Tooling): lint, format, and typecheck run on
+# every commit. Fail fast with `npm run fix` to auto-apply Biome's fixes.
+set -e
+npm run lint
+npm run format
+npm run typecheck
