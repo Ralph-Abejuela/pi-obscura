@@ -1,7 +1,7 @@
 # 0005. Plugin state and configuration for the Obscura pi plugin
 
 **Date**: 2026-09-21
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 

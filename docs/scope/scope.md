@@ -13,7 +13,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 |---|---------|-------|--------|
 | 1 | Stack & architecture | Foundation | in-progress (verified) |
 | 2 | Coding standards & tooling | Foundation | done |
-| 3 | Plugin state & configuration | Foundation | in-progress (building) |
+| 3 | Plugin state & configuration | Foundation | done |
 | 4 | Obscura binary helper | Slice 1 | done |
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
@@ -48,7 +48,7 @@ spec [0005](../specs/0005-plugin-state-and-configuration/index.md) · code in sr
   - [x] Explicit port and stealth spawn · AC-2, AC-3
   - [x] /browser-config command · AC-6
   - [x] Reload, reporting, self check · AC-4
-- [ ] Verify it: `/check verify plugin state & configuration`
+- [x] Verify it: `/check verify plugin state & configuration`
 
 ## Slice 1: the walking thread
 
