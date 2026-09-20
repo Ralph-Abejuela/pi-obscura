@@ -11,10 +11,10 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
-| 1 | Stack & architecture | Foundation | in-progress (designed) |
-| 2 | Coding standards & tooling | Foundation | planned |
+| 1 | Stack & architecture | Foundation | in-progress (verified) |
+| 2 | Coding standards & tooling | Foundation | done |
 | 3 | Plugin state & configuration | Foundation | planned |
-| 4 | Obscura binary helper | Slice 1 | in-progress (building) |
+| 4 | Obscura binary helper | Slice 1 | done |
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | planned |
@@ -28,15 +28,15 @@ spec [0001](../specs/0001-stack-and-connection-architecture/index.md) · code in
 **Done when:** the spec records the connection architecture (how the tool layer and the engine talk), the package scaffold boots under `pi -e`, and a reload leaves the session intact.
 - [x] Decide the stack (spec): `/architect stack & architecture`
 - [x] Build it: `/develop stack & architecture`
-- [ ] Verify it: `/check verify stack & architecture`
+- [x] Verify it: `/check verify stack & architecture`
 - [ ] Test it: `/test stack & architecture`
 
 ### 2. Coding standards & tooling
 Capture conventions, then install lint, format, typecheck, and pre commit enforcement from the real scaffolded package.
 **Done when:** root `AGENTS.md` reflects the real stack, and lint, format, typecheck, and pre commit all run clean.
-- [ ] Capture conventions + tooling choices: `/audit`
-- [ ] Install the tooling: `/develop tooling`
-- [ ] Verify it runs clean: `/check verify tooling`
+- [x] Capture conventions + tooling choices: `/audit`
+- [x] Install the tooling: `/develop tooling`
+- [x] Verify it runs clean: `/check verify tooling`
 
 ### 3. Plugin state & configuration · needs a decision
 One place for settings and session state, so every tool reads the same config and the plugin survives a `/reload` without losing track of the engine.
