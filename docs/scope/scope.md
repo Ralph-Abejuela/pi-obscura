@@ -15,8 +15,8 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 2 | Coding standards & tooling | Foundation | planned |
 | 3 | Plugin state & configuration | Foundation | planned |
 | 4 | Obscura binary helper | Slice 1 | in-progress (building) |
-| 5 | Server lifecycle | Slice 1 | planned |
-| 6 | Core navigation & reading | Slice 1 | planned |
+| 5 | Server lifecycle | Slice 1 | done |
+| 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | planned |
 | 8 | Script & wait | Slice 3 | planned |
 
@@ -60,13 +60,28 @@ spec [0002](../specs/0002-obscura-binary-helper/index.md) · code in src/ (insta
 
 ### 5. Server lifecycle
 Start, watch, and stop the engine with the session, so tools always have a live engine behind them without you managing processes.
-**Done when:** the engine starts with the session, reports ready in the pi status line, and stops cleanly when the session ends; a dead engine is detected and reported, not hung on.
-- [ ] Build it: `/develop server lifecycle`
+spec [0003](../specs/0003-server-lifecycle/index.md) · code in src/ (supervisor.ts, index.ts, engine.ts)
+**Done when:** the engine starts on first use, reports ready in the pi status line, and stops cleanly when the session ends; a dead engine is detected and reported in plain words, and the next browser call restarts it, so nothing hangs.
+- [x] Design it (spec): `/architect server lifecycle`
+- [x] Build it: `/develop server lifecycle`
+  - [x] Persistent engine, lazy start, status line · AC-1
+  - [x] Death detection, restart on next use, queue ownership · AC-3, AC-4
+  - [x] Crash loop guard, fail fast after two failed starts · AC-5
+  - [x] Clean stop on shutdown and reload · AC-2, AC-7
+  - [x] Stale port report, never kill an unowned process · AC-6
+- [x] Verify it: `/check verify server lifecycle`
 
 ### 6. Core navigation & reading
 The read loop that makes the engine useful: go to a page, see what is on it as readable text with the interactive elements, and move around.
+spec [0004](../specs/0004-core-navigation-and-reading/index.md) · code in src/ (browser.ts, supervisor.ts, index.ts)
 **Done when:** the agent can open a URL, read the page as markdown with interactive element references, follow links, and go back, forward, and reload, all through pi tools.
-- [ ] Build it: `/develop core navigation & reading`
+- [x] Build it: `/develop core navigation & reading`
+  - [x] Session page and queue: createTarget at connect, runExclusive serialization · AC-1, AC-9
+  - [x] Navigation and reload: URL validation, Page.navigate and readyState wait, plain refusals; Page.reload · AC-1, AC-2, AC-7
+  - [x] Reading: DOM snapshot to markdown with interactive refs and truncation · AC-3, AC-4, AC-8
+  - [x] History: back and forward through engine history entries · AC-5, AC-6
+  - [x] Tool wiring and self check: five tools, abort and timeout bounds, error mapper, navigation-selfcheck.ts · AC-9
+- [x] Verify it: `/check verify core navigation & reading`
 
 ## Slice 2: act on the page
 
