@@ -9,6 +9,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { goBack, goForward, type NavReport, navigate, readPage, reloadPage } from "./browser.js";
+import {
+  CONFIG_PATH,
+  loadConfig,
+  readRawConfig,
+  setConfigValue,
+  stealthSupport,
+} from "./config.js";
 import { InstallError, installObscura } from "./installer.js";
 import { createEngineSupervisor } from "./supervisor.js";
 
@@ -75,6 +82,27 @@ export default function (pi: ExtensionAPI) {
         lines.push(
           "The engine stays up for the session; a dead engine is restarted by the next browser call.",
         );
+        lines.push(
+          `Config file: ${snap.configPath}${snap.configIssues.length === 0 ? " (no warnings)" : ""}`,
+        );
+        for (const issue of snap.configIssues) {
+          lines.push(`Config warning: ${issue.key}: ${issue.message}`);
+        }
+        // AC-3: with stealth on, the probe says in plain words whether the
+        // flag was applied and what to do if the binary lacks support.
+        if (snap.config.stealth) {
+          const verdict = snap.stealthVerdict;
+          if (verdict) {
+            lines.push(`Stealth: ${verdict.message}.`);
+            lines.push(
+              verdict.supported
+                ? "The engine started with stealth."
+                : "The engine started without stealth.",
+            );
+          } else {
+            lines.push("Stealth is on; the capability check has not run yet.");
+          }
+        }
         const message = lines.join("\n");
         return {
           content: [{ type: "text", text: message }],
@@ -85,6 +113,10 @@ export default function (pi: ExtensionAPI) {
             connected: true,
             supportedDomains: snap.supportedDomains,
             unsupportedDomains: snap.unsupportedDomains,
+            configPath: snap.configPath,
+            config: snap.config,
+            configIssues: snap.configIssues,
+            stealthVerdict: snap.stealthVerdict,
           },
         };
       } catch (error) {
@@ -99,6 +131,10 @@ export default function (pi: ExtensionAPI) {
             connected: snap.phase === "ready",
             supportedDomains: snap.supportedDomains,
             unsupportedDomains: snap.unsupportedDomains,
+            configPath: snap.configPath,
+            config: snap.config,
+            configIssues: snap.configIssues,
+            stealthVerdict: snap.stealthVerdict,
           },
         };
       }
@@ -116,6 +152,116 @@ export default function (pi: ExtensionAPI) {
       } catch (error) {
         ctx.ui.notify(`Browser engine ${engine.statusText()}: ${errorText(error)}`, "warning");
       }
+    },
+  });
+
+  // Spec 0005 AC-6: the plugin's one settings surface. The view form prints
+  // the effective values with their source (file or default) plus the engine
+  // facts; the set form validates a value before writing and refuses a wrong
+  // type or an out of range value with a plain message. Whether the file or a
+  // command changed, the change applies at the next engine start.
+  pi.registerCommand("browser-config", {
+    description:
+      "Show the plugin config and engine facts, or change one setting with set <key> <value>",
+    handler: async (args, ctx) => {
+      const tokens = args
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token.length > 0);
+
+      // Set form: validate before writing; refuse a wrong type or an out of
+      // range value with the file left unchanged (AC-6).
+      if (tokens[0] === "set") {
+        const key = tokens[1];
+        if (!key) {
+          ctx.ui.notify(
+            "Usage: /browser-config set <key> <value>. Keys: binaryPath, stealth, port, " +
+              "connectTimeoutMs, spawnTimeoutMs, stopGraceMs. An empty value clears binaryPath or port.",
+            "warning",
+          );
+          return;
+        }
+        const rawValue = tokens.slice(2).join(" ");
+        const outcome = setConfigValue(key, rawValue);
+        if (!outcome.ok) {
+          ctx.ui.notify(outcome.message, "warning");
+          return;
+        }
+        const lines = [outcome.changed];
+        if (outcome.garbageDropped) {
+          lines.push(
+            "The file did not parse as JSON, so it was rewritten from this edit alone; " +
+              "anything unreadable was dropped.",
+          );
+        }
+        if (outcome.after.issues.length === 0) {
+          lines.push("No config warnings.");
+        } else {
+          for (const issue of outcome.after.issues) {
+            lines.push(`Config warning: ${issue.key}: ${issue.message}`);
+          }
+        }
+        lines.push("The change applies at the next engine start; there is no auto restart.");
+        ctx.ui.notify(lines.join("\n"), "info");
+        return;
+      }
+
+      if (tokens.length > 0) {
+        ctx.ui.notify(
+          "Usage: /browser-config for the view, or /browser-config set <key> <value> to change " +
+            "one setting.",
+          "warning",
+        );
+        return;
+      }
+
+      // View form: every key with its effective value and source, the engine
+      // facts, and the stealth capability verdict run on demand (AC-3, AC-6).
+      const loaded = loadConfig();
+      const cfg = loaded.config;
+      const raw = readRawConfig();
+      const present = (key: string): boolean => raw.kind === "readable" && key in raw.record;
+      const snap = engine.snapshot();
+      const lines = [`Config file: ${CONFIG_PATH}`];
+      lines.push(
+        `binaryPath: ${cfg.binaryPath ?? "not set; the engine search order finds the binary"} (${present("binaryPath") ? "file" : "default"})`,
+      );
+      lines.push(
+        `stealth: ${cfg.stealth ? "on" : "off"} (${present("stealth") ? "file" : "default"})`,
+      );
+      lines.push(
+        `port: ${cfg.port ?? "auto; a free port is picked at each start"} (${present("port") ? "file" : "default"})`,
+      );
+      lines.push(
+        `connectTimeoutMs: ${cfg.connectTimeoutMs} (${present("connectTimeoutMs") ? "file" : "default"})`,
+      );
+      lines.push(
+        `spawnTimeoutMs: ${cfg.spawnTimeoutMs} (${present("spawnTimeoutMs") ? "file" : "default"})`,
+      );
+      lines.push(
+        `stopGraceMs: ${cfg.stopGraceMs} (${present("stopGraceMs") ? "file" : "default"})`,
+      );
+      if (loaded.issues.length === 0) {
+        lines.push("No config warnings.");
+      } else {
+        for (const issue of loaded.issues) {
+          lines.push(`Config warning: ${issue.key}: ${issue.message}`);
+        }
+      }
+      lines.push(
+        `Engine: ${engine.statusText()}${snap.binaryPath ? `; binary at ${snap.binaryPath}` : ""}${snap.endpoint ? `; endpoint ${snap.endpoint}` : ""}`,
+      );
+      const resolvedBinary = cfg.binaryPath ?? snap.binaryPath;
+      if (resolvedBinary) {
+        // AC-3: the view runs the capability check on demand, so the verdict
+        // shows even when stealth is off.
+        const verdict = await stealthSupport(resolvedBinary);
+        lines.push(`Stealth: ${cfg.stealth ? "on" : "off, not applied"}. ${verdict.message}.`);
+      } else {
+        lines.push("Stealth check: no engine binary found; nothing to check.");
+      }
+      lines.push("A changed value applies at the next engine start; there is no auto restart.");
+      ctx.ui.notify(lines.join("\n"), "info");
     },
   });
 

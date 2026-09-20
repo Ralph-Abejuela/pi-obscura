@@ -131,8 +131,8 @@ Ordered for the Tracer Bullet approach: the thinnest end to end thread first (on
 
 ## Follow-up
 
-- [ ] Timeout constants fixed here (endpoint wait, grace period) become feature 3 configuration when plugin state and configuration lands.
-- [ ] Explicit engine port: when feature 3 (plugin state and configuration) lands, have the plugin pick a free port and spawn `obscura serve --port <n>` explicitly, removing the duplicate bind ambiguity with a leftover engine (reconciled 2026-09-21).
+- [x] Timeout constants fixed here (endpoint wait, grace period) became feature 3 configuration; executed by spec 0005 (the keys `connectTimeoutMs`, `spawnTimeoutMs`, `stopGraceMs`).
+- [x] Explicit engine port: executed by spec 0005 (the plugin picks a free loopback port at spawn and runs `obscura serve --port <n>`, with a `port` key to pin it), removing the duplicate bind ambiguity with a leftover engine (reconciled 2026-09-21).
 - [ ] The AC-6 stale port premise was reconciled in place on 2026-09-21: obscura 0.2.2 tolerates the shared loopback bind, so the hint stays as a defensive branch for bind conflict text that this engine never produces.
 - [ ] Root `AGENTS.md` still does not exist; /audit (feature 2, coding standards and tooling) should record the `obscura` and `pi-extension-authoring` skills in its `## Agent skills` section (carried from spec 0001).
 - [ ] The `obscura` skill notes `serve` is the spawn subcommand and the endpoint binds 127.0.0.1; if a future engine release changes the bind, the security model note in this spec needs a revisit.

@@ -13,7 +13,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 |---|---------|-------|--------|
 | 1 | Stack & architecture | Foundation | in-progress (verified) |
 | 2 | Coding standards & tooling | Foundation | done |
-| 3 | Plugin state & configuration | Foundation | planned |
+| 3 | Plugin state & configuration | Foundation | in-progress (building) |
 | 4 | Obscura binary helper | Slice 1 | done |
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
@@ -38,10 +38,17 @@ Capture conventions, then install lint, format, typecheck, and pre commit enforc
 - [x] Install the tooling: `/develop tooling`
 - [x] Verify it runs clean: `/check verify tooling`
 
-### 3. Plugin state & configuration · needs a decision
+### 3. Plugin state & configuration
 One place for settings and session state, so every tool reads the same config and the plugin survives a `/reload` without losing track of the engine.
+spec [0005](../specs/0005-plugin-state-and-configuration/index.md) · code in src/ (config.ts, supervisor.ts, index.ts)
 **Done when:** config (binary path, stealth, timeouts) reads from one source and applies at startup, state reconstructs after a hot reload, and errors reach you in plain words with a clear next step.
-- [ ] Design it (spec): `/architect plugin state & configuration`
+- [x] Design it (spec): `/architect plugin state & configuration`
+- [x] Build it: `/develop plugin state & configuration`
+  - [x] Config module, defaults, first wiring · AC-1, AC-5
+  - [x] Explicit port and stealth spawn · AC-2, AC-3
+  - [x] /browser-config command · AC-6
+  - [x] Reload, reporting, self check · AC-4
+- [ ] Verify it: `/check verify plugin state & configuration`
 
 ## Slice 1: the walking thread
 
