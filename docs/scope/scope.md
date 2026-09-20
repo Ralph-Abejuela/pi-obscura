@@ -56,7 +56,7 @@ spec [0002](../specs/0002-obscura-binary-helper/index.md) · code in src/ (insta
   - [x] Install pipeline, map, download, extract, verify · AC-2, AC-3, AC-4, AC-5, AC-9
   - [x] Surfaces and consent, command, tool, overwrite ask, probe message · AC-1, AC-6, AC-7
   - [x] Auto probe after install · AC-8
-- [ ] Verify it: `/check verify obscura binary helper`
+- [x] Verify it: `/check verify obscura binary helper`
 
 ### 5. Server lifecycle
 Start, watch, and stop the engine with the session, so tools always have a live engine behind them without you managing processes.

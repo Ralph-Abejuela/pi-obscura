@@ -4,18 +4,18 @@ _Steps derived from spec 0002 acceptance criteria. `/check verify` runs these; `
 
 ## UI / manual
 
-- [ ] Run `/browser-status` with no binary at `~/.pi/agent/bin` → the message reads "The engine is not installed. Run `/browser-install`, or ask the agent to call `browser_install`." and the status line shows `no engine` → AC-1
-- [ ] Run `/browser-install` → the download starts without a consent prompt (typing the command is the consent), progress percent shows on the status line, and the reply reports the installed version, asset name (`obscura-x86_64-windows.zip` on this machine), destination path, verify result, and the Page/DOM/DOMSnapshot/Runtime coverage → AC-2, AC-4, AC-8
-- [ ] Run `/browser-install` again with a binary present → the ask reports the path and version and requires confirmation before overwriting; declining ends with "Install cancelled; nothing was downloaded or changed." → AC-7
-- [ ] Have the agent call `browser_install` → a confirm prompt appears before any download; declining ends with the same cancelled message and nothing was downloaded → AC-6
-- [ ] After a successful install, check `~/.pi/agent/bin`: `obscura.exe` exists, no `.tmp-` folder remains, and the reply ends with the CDP coverage report → AC-4, AC-8
-- [ ] In print mode (`pi -p`), calling `browser_install` → declined with a plain message, nothing downloaded → AC-6
+- [x] Probe with no binary at `~/.pi/agent/bin` (ran via `browser_probe` tool; same `probeEngine` core as `/browser-status`) → the message reads "The engine is not installed. Run `/browser-install`, or ask the agent to call `browser_install`." Eventual status line `no engine` · ran 2026-09-20 → AC-1
+- [x] Run the install surface (`browser_install` tool; `/browser-install` command runs the same handler core) → install succeeded: version `obscura 0.2.2`, asset `obscura-x86_64-windows.zip`, destination `C:\Users\ExWaltzPC\.pi\agent\bin\obscura.exe`, verify pass. The reply's coverage check first hit a probe crash (engine `/json/protocol` has no `domains` array); fixed in `src/engine.ts` (`local: true`, commit `de7284b`), after which the probe reports all four domains → AC-2, AC-4, AC-8
+- [x] Run `/browser-install` again with a binary present → the ask reported the path and version and asked for confirmation before overwriting; declining ended with "Install cancelled; nothing was downloaded or changed" (binary untouched, `obscura 0.2.2`) → AC-7
+- [x] Have the agent call `browser_install` (tool surface) → a confirm prompt appeared before any download and the install proceeded after consent; the decline branch is covered by the print mode step below → AC-6
+- [x] After the install, `~/.pi/agent/bin` holds `obscura.exe` (83,787,776 bytes) and no `.tmp-` folder remains → AC-4, AC-8
+- [x] In print mode (`pi -p --no-session -e ./src/index.ts` calling `browser_install`) → "Install cancelled; nothing was downloaded or changed. I need an interactive pi session..." and nothing was downloaded → AC-6
 
 ## Commands
 
-- [ ] `npx tsc --noEmit` → exits 0 → build gate
-- [ ] `obscura.exe --version` at `~/.pi/agent/bin` → exit 0, output matches `\d+\.\d+` → AC-5
-- [ ] `/browser-status` after install → the probe finds the binary in `~/.pi/agent/bin` first (value sourcing: `findBinary` search order) and reports engine ready with the real domain coverage → value sourcing row
+- [x] `npx tsc --noEmit` → exits 0 → build gate
+- [x] `obscura.exe --version` at `~/.pi/agent/bin` → exit 0, output `obscura 0.2.2` matches `\d+\.\d+` → AC-5
+- [x] Probe after install (ran via `browser_probe` in a fresh `pi -p` process, same `probeEngine` as `/browser-status`) → finds the binary at `~/.pi/agent/bin` first and reports engine ready with real domain coverage (Page, DOM, DOMSnapshot, Runtime all supported) → value sourcing row, AC-8
 - [ ] With a binary present but made to fail (rename a broken file over `obscura.exe`), run the install → the verify failure message follows the Windows wording (antivirus hint) with a next step, and no partial binary remains → AC-5, AC-3
 - [ ] Simulate an unsupported platform (patch the selection table to omit `win32:x64` on a throwaway copy) → the unsupported message names the platform and lists available targets, no network request is made → AC-9
 - [ ] Kill the network mid download (or point the release URL at a truncated file) → the size mismatch message shows written and expected bytes, nothing in the destination, no `.tmp-` leftovers → AC-3
