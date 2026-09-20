@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "obscura": {
+      "source": "h4ckf0r0day/obscura",
+      "sourceType": "github",
+      "skillPath": "skills/obscura/SKILL.md",
+      "computedHash": "10ca77c65bbf0880b4e06b34d8c25c9eaaa42d7167d0f7012691f11a1f2287d4"
+    },
+    "pi-extension-authoring": {
+      "source": "romiluz13/pi-agent-skills",
+      "sourceType": "github",
+      "skillPath": "pi-skills/pi-extension-authoring/SKILL.md",
+      "computedHash": "1128ce6313c802e367de7f70f85d9ef185cbd596c0c944f5d0edab765cda0ca5"
+    }
+  }
+}

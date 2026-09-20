@@ -1,0 +1,4 @@
+node_modules/
+*.tsbuildinfo
+# junctions pointing back into .agents/skills; git would duplicate them
+.claude/
