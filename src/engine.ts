@@ -1,13 +1,14 @@
 // src/engine.ts
-// The thin engine probe for the stack and architecture scaffold.
-// It finds the Obscura binary, starts a serve instance, opens a CDP connection,
-// and reports which protocol domains the engine actually implements. Later
-// features thicken each seam: feature 4 owns installing a missing binary,
-// feature 5 replaces the spawn per probe with one persistent engine per session.
+// The throwaway engine probe: finds the Obscura binary, starts a serve instance,
+// opens a CDP connection, and reports which protocol domains the engine actually
+// implements. Feature 4 (binary helper) uses it to verify an install, so it
+// deliberately spawns a fresh engine per check and tears it down after (spec
+// 0003 keeps this path; the persistent per session engine lives in supervisor.ts).
+// The exported helpers here are shared with the supervisor.
 // ponytail: every probe spawns its own engine process and tears it down after;
-// swap this for a persistent engine in feature 5 (server lifecycle).
+// that is intentional, it is the install verification path.
 
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -36,7 +37,11 @@ const REQUIRED_DOMAINS = ["Page", "DOM", "DOMSnapshot", "Runtime"] as const;
 
 // A raw protocol send: we probe by method name because the engine's actual
 // coverage is the thing under test, not a fixed protocol surface.
-type SendRaw = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+type SendRaw = (
+  method: string,
+  params?: Record<string, unknown>,
+  sessionId?: string,
+) => Promise<unknown>;
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -44,7 +49,7 @@ const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // the installer writes it, so it lives here and the import stays one way.
 export const BIN_DIR = join(homedir(), ".pi", "agent", "bin");
 
-function findBinary(): string | undefined {
+export function findBinary(): string | undefined {
   const names = process.platform === "win32" ? ["obscura.exe", "obscura"] : ["obscura"];
   // The installer's destination is checked first (spec 0002 follow-up).
   const dirs = [BIN_DIR];
@@ -73,11 +78,13 @@ function abortPromise(signal?: AbortSignal): Promise<never> | null {
   if (!signal) return null;
   if (signal.aborted) return Promise.reject(new Error("the probe was cancelled"));
   return new Promise<never>((_resolve, reject) => {
-    signal.addEventListener("abort", () => reject(new Error("the probe was cancelled")), { once: true });
+    signal.addEventListener("abort", () => reject(new Error("the probe was cancelled")), {
+      once: true,
+    });
   });
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
     promise.then(
@@ -94,7 +101,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 }
 
 // Resolves with the first ws endpoint the engine prints on stdout or stderr.
-function waitForEndpoint(child: EngineProcess, timeoutMs: number): Promise<string> {
+export function waitForEndpoint(child: EngineProcess, timeoutMs: number): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
@@ -112,7 +119,9 @@ function waitForEndpoint(child: EngineProcess, timeoutMs: number): Promise<strin
     const onExit = (code: number | null) => {
       cleanup();
       reject(
-        new Error(`the engine exited with code ${code ?? "unknown"} before printing a connection endpoint`),
+        new Error(
+          `the engine exited with code ${code ?? "unknown"} before printing a connection endpoint`,
+        ),
       );
     };
     const cleanup = () => {
@@ -127,7 +136,7 @@ function waitForEndpoint(child: EngineProcess, timeoutMs: number): Promise<strin
   });
 }
 
-async function probeDomains(
+export async function probeDomains(
   client: CDP.Client,
   sessionId: string | undefined,
 ): Promise<{ supported: string[]; unsupported: string[] }> {
@@ -160,13 +169,17 @@ async function runProbe(
   });
   // Spawn failures surface through the error event, not the exit event.
   const spawnFailed = new Promise<never>((_resolve, reject) => {
-    child.once("error", (error) => reject(new Error(`I could not start the engine: ${error.message}`)));
+    child.once("error", (error) =>
+      reject(new Error(`I could not start the engine: ${error.message}`)),
+    );
   });
 
   let client: CDP.Client | undefined;
   try {
     const endpoint = await Promise.race(
-      [spawnFailed, waitForEndpoint(child, endpointTimeoutMs), aborted].filter(Boolean) as Promise<unknown>[],
+      [spawnFailed, waitForEndpoint(child, endpointTimeoutMs), aborted].filter(
+        Boolean,
+      ) as Promise<unknown>[],
     );
     const wsUrl = endpoint as string;
     throwIfAborted(signal);
@@ -216,7 +229,9 @@ async function runProbe(
           "if a required domain is missing, route back through /architect before slice 1 builds on it.",
       );
     } else {
-      lines.push("All required domains for navigation and reading are present, so slice 1 can build on this.");
+      lines.push(
+        "All required domains for navigation and reading are present, so slice 1 can build on this.",
+      );
     }
     return {
       message: lines.join("\n"),
@@ -251,9 +266,14 @@ export async function probeEngine(options: ProbeOptions = {}): Promise<ProbeResu
     };
   }
   try {
-    return await withTimeout(runProbe(binaryPath, endpointTimeoutMs, options.signal), 30_000, "engine probe");
+    return await withTimeout(
+      runProbe(binaryPath, endpointTimeoutMs, options.signal),
+      30_000,
+      "engine probe",
+    );
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "the probe failed for an unknown reason";
+    const detail =
+      error instanceof Error ? error.message : "the probe failed for an unknown reason";
     return {
       message: detail,
       binaryFound: true,
