@@ -170,7 +170,12 @@ async function runProbe(
     );
     const wsUrl = endpoint as string;
     throwIfAborted(signal);
-    const connectPromise = CDP({ target: wsUrl }).catch((error: unknown) => {
+    // local: true uses the protocol document bundled with the library instead of
+    // asking the engine for one. Obscura's /json/protocol serves only the version
+    // header with no domains array, and chrome-remote-interface crashes on that.
+    // The bundled document is the full Chrome surface; the engine's own coverage
+    // is still probed live below, domain by domain.
+    const connectPromise = CDP({ target: wsUrl, local: true }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : "the connection failed";
       throw new Error(`I could not open a CDP connection to the engine: ${detail}`);
     });
