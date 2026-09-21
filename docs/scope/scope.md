@@ -19,7 +19,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
 | 8 | Script & wait | Slice 3 | done |
-| 9 | Session state | Slice 4 | in-progress (designed) |
+| 9 | Session state | Slice 4 | in-progress (building) |
 
 ## Foundations
 
@@ -135,7 +135,7 @@ spec [0008](../specs/0008-session-state/index.md)
 **Done when:** cookies imported from your real browser are live in a new engine session, cookies the engine earns survive a restart, a site that accepts an imported real session loads, and no report ever prints a cookie value. The Cloudflare class stays a measured outcome rather than a promise: it is tested with an imported session and the result reported honestly, because the engine's TLS hello and missing WebGL may still be refused however good the cookie is.
 - [x] Design it (spec): `/architect session state`
 - [ ] Build it: `/develop session state`
-  - [ ] Profile directory end to end · AC-2, AC-6
+  - [x] Profile directory end to end · AC-2, AC-6
   - [ ] Cookie core: set, list redacted, clear · AC-1, AC-3, AC-4
   - [ ] Import from an export file · AC-1, AC-5
   - [ ] Surfaces: tool, command, config view · AC-3, AC-5, AC-6

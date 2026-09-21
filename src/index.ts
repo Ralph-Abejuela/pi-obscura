@@ -182,7 +182,8 @@ export default function (pi: ExtensionAPI) {
         if (!key) {
           ctx.ui.notify(
             "Usage: /browser-config set <key> <value>. Keys: binaryPath, stealth, port, " +
-              "connectTimeoutMs, spawnTimeoutMs, stopGraceMs. An empty value clears binaryPath or port.",
+              "connectTimeoutMs, spawnTimeoutMs, stopGraceMs, profileDir. An empty value clears " +
+              "binaryPath, port, or profileDir.",
             "warning",
           );
           return;
@@ -246,6 +247,10 @@ export default function (pi: ExtensionAPI) {
       );
       lines.push(
         `stopGraceMs: ${cfg.stopGraceMs} (${present("stopGraceMs") ? "file" : "default"})`,
+      );
+      lines.push(`profileDir: ${cfg.profileDir} (${present("profileDir") ? "file" : "default"})`);
+      lines.push(
+        "The profile holds the session cookie jar in plain text, so that directory is a credential store: this plugin never prints a cookie value.",
       );
       if (loaded.issues.length === 0) {
         lines.push("No config warnings.");

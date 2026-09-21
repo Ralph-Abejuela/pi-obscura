@@ -68,6 +68,7 @@ One line: the plugin gains a `profileDir` setting passed to the engine as `--sto
 - **The profile holds credentials in plain text**, so its permissions are the protection: the directory is created owner only where the OS supports it, and every report that names the path says plainly that session cookies live there unencrypted.
 - **An import is all or nothing**: every entry is validated before the first is written, so a refused import cannot leave a half session behind.
 - **All CDP work still runs through the one queue** with the 30 second clock and the caller's abort signal (spec 0001, spec 0004, rechecked here).
+- **The session reaches disk when the CDP connection closes, not before.** The engine writes its cookie jar about 200 ms after the socket closes (measured: 211 ms), and a killed process writes nothing, so stopping closes the connection, settles, and only then kills the child. Stop faster and the session is silently lost.
 - **The challenge limit is unchanged and stated**: an imported session is the route that works, and the engine's fingerprint is not claimed to pass a challenge on its own (measured, see rationale probe record).
 - **The plugin never fetches cookies itself.** It reads a file the caller supplies; it does not reach into a real browser's profile, which keeps the trust boundary at the caller.
 

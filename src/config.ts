@@ -38,6 +38,12 @@ export interface EngineConfig {
   spawnTimeoutMs: number;
   /** Grace before a hard kill when stopping the engine. */
   stopGraceMs: number;
+  /**
+   * Where the engine keeps its profile, so the cookies it earns survive between
+   * runs (spec 0008). Passed to the engine as --storage-dir; the file it holds
+   * is plain JSON, so it is a credential store and the reports say so.
+   */
+  profileDir: string;
 }
 
 export interface ConfigIssue {
@@ -57,6 +63,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   connectTimeoutMs: 10_000,
   spawnTimeoutMs: 30_000,
   stopGraceMs: 2_000,
+  profileDir: join(homedir(), ".pi", "agent", "obscura-profile"),
 };
 
 type Verdict<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -90,6 +97,12 @@ const BOOLEAN: (raw: unknown) => Verdict<boolean> = (raw) =>
     : { ok: false, reason: "must be true or false" };
 const TEXT: (raw: unknown) => Verdict<string> = (raw) =>
   typeof raw === "string" ? { ok: true, value: raw } : { ok: false, reason: "must be text" };
+const NON_EMPTY_TEXT: (raw: unknown) => Verdict<string> = (raw) => {
+  if (typeof raw !== "string") return { ok: false, reason: "must be text" };
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: false, reason: "must be a path, not empty" };
+  return { ok: true, value: trimmed };
+};
 
 const KNOWN_KEYS = [
   "binaryPath",
@@ -98,6 +111,7 @@ const KNOWN_KEYS = [
   "connectTimeoutMs",
   "spawnTimeoutMs",
   "stopGraceMs",
+  "profileDir",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -139,6 +153,16 @@ export function parseConfig(raw: unknown): LoadedConfig {
         if (verdict.ok) config.port = verdict.value;
         else
           issues.push({ key, message: `port ${verdict.reason}; using a free port at each start` });
+        break;
+      }
+      case "profileDir": {
+        const verdict = NON_EMPTY_TEXT(raw[key]);
+        if (verdict.ok) config.profileDir = verdict.value;
+        else
+          issues.push({
+            key,
+            message: `profileDir ${verdict.reason}; using ${DEFAULT_CONFIG.profileDir}, so cookies still persist. Fix the path, or clear it with /browser-config set profileDir`,
+          });
         break;
       }
       case "connectTimeoutMs":
@@ -320,6 +344,22 @@ function parseEdit(key: string, rawValue: string): Edit {
       changed: `stealth set to ${value}`,
       apply: (r) => {
         r.stealth = value === "true";
+      },
+    };
+  }
+  if (key === "profileDir") {
+    if (rawValue.trim() === "") {
+      return {
+        ok: true,
+        changed: `profileDir cleared; the default ${DEFAULT_CONFIG.profileDir} applies`,
+        apply: (r) => delete r.profileDir,
+      };
+    }
+    return {
+      ok: true,
+      changed: `profileDir set to ${rawValue.trim()}`,
+      apply: (r) => {
+        r.profileDir = rawValue.trim();
       },
     };
   }

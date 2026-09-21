@@ -31,6 +31,7 @@ function main() {
     connectTimeoutMs: -5, // not positive: falls back to default
     spawnTimeoutMs: "fast", // wrong type: falls back to default
     stopGraceMs: 5000, // valid
+    profileDir: 42, // wrong type: falls back to the default path
     madeUpKey: true, // unknown: ignored with a note
   });
   assert.equal(messy.config.binaryPath, undefined, "binaryPath falls back to absent");
@@ -39,6 +40,11 @@ function main() {
   assert.equal(messy.config.connectTimeoutMs, 10_000, "bad timeout falls back to default");
   assert.equal(messy.config.spawnTimeoutMs, 30_000, "bad spawn timeout falls back to default");
   assert.equal(messy.config.stopGraceMs, 5000, "valid timeout survives");
+  assert.equal(
+    messy.config.profileDir,
+    DEFAULT_CONFIG.profileDir,
+    "a bad profileDir falls back to the default path, so cookies still persist",
+  );
   const keysNamed = new Set(messy.issues.map((issue) => issue.key));
   for (const key of [
     "binaryPath",
@@ -46,6 +52,7 @@ function main() {
     "port",
     "connectTimeoutMs",
     "spawnTimeoutMs",
+    "profileDir",
     "madeUpKey",
   ]) {
     assert.ok(keysNamed.has(key), `a warning names every offending key, including ${key}`);
@@ -56,6 +63,7 @@ function main() {
     connectTimeoutMs: 10_000,
     spawnTimeoutMs: 30_000,
     stopGraceMs: 2_000,
+    profileDir: DEFAULT_CONFIG.profileDir,
   };
   assert.deepEqual(DEFAULT_CONFIG, defaults, "the defaults match the spec table");
   assert.deepEqual(
@@ -122,6 +130,22 @@ function main() {
     const clearPort = setConfigValue("port", "", configPath);
     assert.equal(clearPort.ok, true, "an empty value clears the port override");
     assert.equal(clearPort.after.config.port, undefined, "the port override is gone");
+
+    // spec 0008: profileDir is settable, trimmed, and can go back to the default.
+    const setProfile = setConfigValue("profileDir", "  C:/tmp/probe profile  ", configPath);
+    assert.equal(setProfile.ok, true, "a profileDir path is accepted");
+    assert.equal(
+      setProfile.after.config.profileDir,
+      "C:/tmp/probe profile",
+      "the path is trimmed, so a stray space cannot create a second directory",
+    );
+    const clearProfile = setConfigValue("profileDir", "", configPath);
+    assert.equal(clearProfile.ok, true, "an empty value clears the profileDir override");
+    assert.equal(
+      clearProfile.after.config.profileDir,
+      DEFAULT_CONFIG.profileDir,
+      "clearing profileDir restores the default path, so cookies still persist",
+    );
 
     // A hand edit with mixed values still validates per key on read.
     writeFileSync(configPath, JSON.stringify({ stealth: true, port: 70000 }, null, 2), "utf8");

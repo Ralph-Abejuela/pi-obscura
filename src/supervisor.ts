@@ -19,7 +19,7 @@
 // binary supports it), and the timeouts come from the same read.
 
 import { type ChildProcessByStdio, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import type { Readable } from "node:stream";
 import CDP from "chrome-remote-interface";
@@ -116,6 +116,10 @@ const BROKEN_MESSAGE =
   "The engine failed to start twice in a row and is marked broken. Reload the plugin (/reload) " +
   "or restart pi, then call again.";
 const CANCELLED_MESSAGE = "the browser call was cancelled";
+// spec 0008: the settle the engine needs after the CDP connection closes before
+// its cookie jar lands in the profile directory (measured: the write appears
+// about 211 ms after the close). Stopping faster than this loses the session.
+const SESSION_FLUSH_MS = 300;
 // AC-2: a spawn failure whose detail matches a busy bind gets the stale port hint.
 const STALE_PORT_PATTERN =
   /address already in use|already in use|EADDRINUSE|failed to bind|could not bind|bind.*error|port.*in use/i;
@@ -328,10 +332,28 @@ export function createEngineSupervisor(): EngineSupervisor {
       stealthVerdict = await stealthSupport(binaryPath);
     }
     state.stealthVerdict = stealthVerdict ?? null;
+
+    // spec 0008: the engine keeps its cookie jar in this directory, so a session
+    // survives between engine runs. Created here rather than assumed, owner only
+    // where the OS honours the mode, and a failure names the setting instead of
+    // surfacing later as an engine problem.
+    const profileDir = cfg.profileDir;
+    try {
+      mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "it could not be created";
+      throw new Error(
+        `the profileDir setting points at ${profileDir}, which could not be created (${detail}). ` +
+          `Fix the path in ${CONFIG_PATH}, or clear the setting with /browser-config set profileDir.`,
+      );
+    }
+
     const args = [
       "serve",
       "--port",
       String(port),
+      "--storage-dir",
+      profileDir,
       ...(stealthVerdict?.supported ? ["--stealth"] : []),
     ];
 
@@ -494,7 +516,14 @@ export function createEngineSupervisor(): EngineSupervisor {
     state.lastConfig = null;
     state.stealthVerdict = null;
     applyStatus();
-    if (client) client.close().catch(() => {});
+    if (client) {
+      // spec 0008: the engine writes its cookie jar into the profile directory
+      // when the CDP connection closes, and the write lands about 200 ms later
+      // (measured: 211 ms). Killing the child first loses the session, which is
+      // why the close is awaited and given one settle before the kill.
+      await client.close().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, SESSION_FLUSH_MS));
+    }
     if (child && child.exitCode === null) {
       // The grace comes from the config read fresh at stop; a corrupt file
       // falls back to the default, per key, so this cannot throw.
