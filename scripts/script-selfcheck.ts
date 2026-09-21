@@ -39,7 +39,8 @@ const WAIT_URL = `data:text/html,${encodeURIComponent(WAIT_HTML)}`;
 // The page a mid wait navigation lands on: its text arrives after the
 // navigation, so the wait has to survive the navigation and keep polling.
 const MOVED_HTML =
-  "<!doctype html><html><body><title>Moved</title><p id='here'></p><script>" +
+  "<!doctype html><html><body><title>Moved</title><p id='here'></p>" +
+  "<button id='after'>After</button><script>" +
   "setTimeout(function(){document.getElementById('here').textContent='target'+' text here'},300)" +
   "</script></body></html>";
 const MOVED_URL = `data:text/html,${encodeURIComponent(MOVED_HTML)}`;
@@ -59,8 +60,13 @@ async function main() {
   const engine = createEngineSupervisor();
   try {
     await engine.runExclusive(undefined, (h) => navigate(h, WAIT_URL, undefined));
-    const read = await engine.runExclusive(undefined, (h) => readPage(h, undefined));
-    const goRef = requireRef(read.refs, (r) => r.text === "Go", "the Go button");
+    const staleRead = await engine.runExclusive(undefined, (h) => readPage(h, undefined));
+    const goRef = requireRef(staleRead.refs, (r) => r.text === "Go", "the Go button");
+    // The stale ref case needs a ref the NEXT page does not hold. Ref numbers
+    // are per page and are reused, so a ref from the old page only reads as
+    // stale when the new page issues fewer refs: the input is the second ref
+    // here, and the moved fixture has exactly one interactive element.
+    const inputRef = requireRef(staleRead.refs, (r) => r.text === "query", "the query input");
 
     // --- AC-1: a plain expression, a statement script, and a value with a type ---
     let report = await engine.runExclusive(undefined, (h) =>
@@ -200,9 +206,14 @@ async function main() {
 
     // --- AC-2: a ref the fresh snapshot does not hold is refused ---
     await engine.runExclusive(undefined, (h) => navigate(h, MOVED_URL, undefined));
+    const movedRead = await engine.runExclusive(undefined, (h) => readPage(h, undefined));
+    assert.ok(
+      !movedRead.refs.some((ref) => ref.ref === inputRef.ref),
+      "fixture check: the moved page must not reuse the old ref number, or the refusal cannot be tested",
+    );
     await assert.rejects(
       engine.runExclusive(undefined, (h) =>
-        evalInPage(h, { expression: "return this.textContent", ref: goRef.ref }, undefined),
+        evalInPage(h, { expression: "return this.textContent", ref: inputRef.ref }, undefined),
       ),
       /latest snapshot|fresh refs/,
       "a stale ref on the eval ref path is refused in plain words",
@@ -351,7 +362,10 @@ async function main() {
     const afterNav = await surviving;
     assert.equal(afterNav.appeared, true, "a wait survives a page navigating under it");
     assert.equal(afterNav.title, "Moved", "the verdict reports the page it ended on");
-    assert.ok(afterNav.refs.length >= 0, "the verdict still carries the refs contract");
+    assert.ok(
+      afterNav.refs.some((ref) => ref.text === "After"),
+      "the verdict's refs come from the page it ended on, not the one it started on",
+    );
 
     console.log("script and wait self-check passed");
   } finally {

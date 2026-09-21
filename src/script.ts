@@ -261,6 +261,31 @@ const PROMISE_BOUND_MESSAGE =
   "as this tool's clock, so the engine stopped waiting for it. The session is still usable; call " +
   "again, or use browser_wait for content that appears later.";
 
+// AC-12: the one error a tool raises itself, when the clock expired with a page
+// evaluation still outstanding. It is already plain and already carries the
+// engine death verdict, so the error mapper passes it through and the queue
+// acts on it. Nothing outside the page can stop page JavaScript, which is why a
+// still running evaluation means a fresh engine on the next call.
+function hangingScriptError(): Error {
+  return alreadyClassified(
+    new Error(
+      `The page script was still running when the tool clock expired after ${
+        TOOL_TIMEOUT_MS / 1000
+      } seconds, so the engine is treated as down: the next browser call starts a fresh engine and ` +
+        "the page state is gone. The page script may still be running, because an endless loop in a " +
+        "page script cannot be stopped from outside; keep a page loop short or split it up.",
+    ),
+    true,
+  );
+}
+
+// A page error whose own text happens to contain a clock phrase must never be
+// read as a timeout: the outstanding flag is only true while an evaluation is
+// genuinely in flight, and this guard keeps that reading honest.
+function timedOutAtTheClock(error: unknown): boolean {
+  return /timed out|did not settle within/i.test(errorText(error));
+}
+
 // AC-1, AC-2, AC-3, AC-4: run the caller's JavaScript and report the value with
 // its type, or fail in plain words on a page error, a stale ref, an unsettled
 // promise, or a page script that outlives the tool clock (AC-12).
@@ -275,11 +300,17 @@ export async function evalInPage(
   // expired. The finally only runs once the evaluation came back, so a page
   // script that never returns leaves this true.
   let outstanding = false;
+
   try {
-    const payload = await runOp(what, signal, async () => {
+    const result = await runOp(what, signal, async () => {
       outstanding = true;
       try {
-        return await evaluateOnce(handle, options, signal);
+        const payload = await evaluateOnce(handle, options, signal);
+        // AC-11: the page read belongs to the same call, so it runs inside the
+        // same clock and abort race. Left outside, a page that wedges after
+        // returning its value would hang this call with nothing to bound it.
+        const info = await pageInfo(handle);
+        return { payload, info };
       } catch (error) {
         // The engine raises its own bound on an awaited promise; report it in
         // plain words rather than as a raw protocol message.
@@ -291,29 +322,22 @@ export async function evalInPage(
         outstanding = false;
       }
     });
-    const described = describeValue(payload);
-    const info = await pageInfo(handle);
-    return { ...described, ref: options.ref, url: info.href, title: info.title };
+    const described = describeValue(result.payload);
+    return {
+      ...described,
+      ref: options.ref,
+      url: result.info.href,
+      title: result.info.title,
+    };
   } catch (error) {
-    const timedOut = /timed out|did not settle within/i.test(errorText(error));
-    if (!outstanding || !timedOut) throw error;
+    if (!outstanding || !timedOutAtTheClock(error)) throw error;
     // AC-3: an awaited call is exempt, because the engine's own 30 second bound
     // is exactly this case and the session recovers by itself; it raises no
     // death verdict.
     if (awaiting) throw alreadyClassified(new Error(PROMISE_BOUND_MESSAGE));
-    // AC-12: nothing outside the page can stop page JavaScript, so an
-    // evaluation still outstanding at the clock means the engine is treated as
-    // down and the next browser call starts a fresh one.
-    throw alreadyClassified(
-      new Error(
-        `The page script was still running when the tool clock expired after ${
-          TOOL_TIMEOUT_MS / 1000
-        } seconds, so the engine is treated as down: the next browser call starts a fresh engine ` +
-          "and the page state is gone. The page script may still be running, because an endless " +
-          "loop in a page script cannot be stopped from outside; keep a page loop short or split it up.",
-      ),
-      true,
-    );
+    // AC-12: an evaluation still outstanding at the clock means the engine is
+    // treated as down and the next browser call starts a fresh one.
+    throw hangingScriptError();
   }
 }
 
@@ -417,50 +441,71 @@ export async function waitForMatch(
   let appeared = false;
   let failedTicks = 0;
   let lastFailure = "";
+  // AC-12: whether a page evaluation was still outstanding when the tool clock
+  // expired. A tick and the final snapshot both run through tracked, whose
+  // finally clears the flag only once the call came back, so a poll the page
+  // never returns from leaves it true and the engine is treated as down.
+  let outstanding = false;
+  const tracked = async <T>(body: () => Promise<T>): Promise<T> => {
+    outstanding = true;
+    try {
+      return await body();
+    } finally {
+      outstanding = false;
+    }
+  };
 
-  return runOp("the wait", signal, async () => {
-    while (true) {
-      if (signal?.aborted) throw new Error(CANCELLED_MESSAGE);
-      try {
-        appeared = await pollOnce(handle, expression);
-        failedTicks = 0;
-      } catch (error) {
-        const detail = errorText(error);
-        // A page error is the caller's own expression and is refused at once,
-        // and a dead engine is never retried (AC-11).
-        if (detail.startsWith(PAGE_ERROR_PREFIX) || isConnectionDead(detail)) throw error;
-        failedTicks += 1;
-        lastFailure = detail;
-        if (failedTicks >= MAX_FAILED_TICKS) {
-          throw new Error(
-            `the wait could not read the page ${MAX_FAILED_TICKS} times in a row: ${lastFailure}. ` +
-              "The page may be navigating or mid change; call browser_read to see where it is.",
-          );
+  try {
+    return await runOp("the wait", signal, async () => {
+      while (true) {
+        if (signal?.aborted) throw new Error(CANCELLED_MESSAGE);
+        try {
+          appeared = await tracked(() => pollOnce(handle, expression));
+          failedTicks = 0;
+        } catch (error) {
+          const detail = errorText(error);
+          // A page error is the caller's own expression and is refused at once,
+          // and a dead engine is never retried (AC-11).
+          if (detail.startsWith(PAGE_ERROR_PREFIX) || isConnectionDead(detail)) throw error;
+          failedTicks += 1;
+          lastFailure = detail;
+          if (failedTicks >= MAX_FAILED_TICKS) {
+            throw new Error(
+              `the wait could not read the page ${MAX_FAILED_TICKS} times in a row: ${lastFailure}. ` +
+                "The page may be navigating or mid change; call browser_read to see where it is.",
+            );
+          }
         }
+        if (appeared) break;
+        if (Date.now() >= deadline) break;
+        await sleep(WAIT_POLL_MS, signal);
       }
-      if (appeared) break;
-      if (Date.now() >= deadline) break;
-      await sleep(WAIT_POLL_MS, signal);
-    }
 
-    const elapsedMs = Date.now() - started;
-    const fresh = await snapshotRefs(handle, signal);
-    const finalNotes = [...notes];
-    if (!appeared && mode === "selector") {
-      finalNotes.push(
-        `This engine returns null for a selector it cannot parse, so a mistyped selector reads as ` +
-          `no match. Check the selector: ${watched}`,
-      );
-    }
-    return {
-      appeared,
-      mode,
-      watched,
-      elapsedMs,
-      notes: finalNotes,
-      refs: fresh.refs,
-      url: fresh.url,
-      title: fresh.title,
-    };
-  });
+      const elapsedMs = Date.now() - started;
+      const fresh = await tracked(() => snapshotRefs(handle, signal));
+      const finalNotes = [...notes];
+      if (!appeared && mode === "selector") {
+        finalNotes.push(
+          `This engine returns null for a selector it cannot parse, so a mistyped selector reads as ` +
+            `no match. Check the selector: ${watched}`,
+        );
+      }
+      return {
+        appeared,
+        mode,
+        watched,
+        elapsedMs,
+        notes: finalNotes,
+        refs: fresh.refs,
+        url: fresh.url,
+        title: fresh.title,
+      };
+    });
+  } catch (error) {
+    // AC-12: a page evaluation still outstanding at the clock means the engine
+    // is treated as down and the next browser call starts a fresh one. A wait
+    // never awaits a promise, so no case here is exempt.
+    if (!outstanding || !timedOutAtTheClock(error)) throw error;
+    throw hangingScriptError();
+  }
 }

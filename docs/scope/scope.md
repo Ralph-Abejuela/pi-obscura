@@ -18,7 +18,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
-| 8 | Script & wait | Slice 3 | in-progress (building) |
+| 8 | Script & wait | Slice 3 | in-progress (verified) |
 
 ## Foundations
 
@@ -118,7 +118,9 @@ spec [0007](../specs/0007-script-and-wait/index.md) · code in src/ (script.ts, 
   - [x] Wait, text mode, end to end · AC-5, AC-6, AC-7, AC-8, AC-9, AC-10
   - [x] Selector and condition modes · AC-5, AC-6, AC-11
   - [x] Hang recovery and the self check · AC-11, AC-12, AC-13
-- [ ] Verify it: `/check verify script & wait`
+- [x] Verify it: `/check verify script & wait`
+
+Reopened and re-verified on 2026-09-21. `/check review` blocked the merge on two real blockers, both in the wedge paths: a `browser_wait` poll that wedges raised no engine down verdict (AC-12), and the read after a successful eval ran outside the tool clock and could hang the call forever (AC-11). Both are fixed and proven by a real 30 second wedge on each path. Still open from the same review, recorded in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md): two majors (an abort with an outstanding page evaluation raises no death verdict; the wait's own clock starts before the queue, so queue time is charged against it) and five minor notes. `done` again is the engineer's call.
 
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.
