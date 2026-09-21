@@ -65,7 +65,7 @@ One line: `browser_eval` returns the script's completion value typed and capped,
 | eval (ref form) | the page's error message | the CDP protocol error text `JS error: <page message>` plus a stack, trimmed to the message and the first stack line (probe verified) |
 | eval (ref form) | the awaited value | the `await` input through `Runtime.callFunctionOn` with `awaitPromise`, bounded by the engine's own 30 second bound on this path too (probe verified) |
 | wait | the match verdict | one poll expression per tick: plugin authored for `text` and `selector`, caller authored for `condition`, its completion value read for truthiness |
-| wait | the `text` poll expression | `document.body.innerText.indexOf(<the literal>) >= 0`, a plugin owned constant expression (probe verified: `innerText` here equals `textContent`, so hidden, offscreen, script, and style text all count) |
+| wait | the `text` poll expression | `(document.body ? document.body.innerText : "").indexOf(<the literal>) >= 0`, a plugin owned constant expression (probe verified: `innerText` here equals `textContent`, so hidden, offscreen, script, and style text all count; the body is guarded because a document with no body must read as no match yet rather than as a fatal page error) |
 | wait | the `selector` poll expression | `document.querySelector(<the literal>) !== null`, a plugin owned constant expression (probe verified: an invalid selector returns null, no exception) |
 | wait | the elapsed time | the wall clock at the end of the poll loop minus the start |
 | wait | the wait's own bound | the `timeoutMs` input, defaulted by a code constant and clamped to the code constant range |
@@ -144,7 +144,7 @@ Built against the real engine, per the project's Tracer Bullet approach: one thi
 
 ## Follow-up
 
-- [ ] `/check verify script & wait` next; its checklist includes the wedge recovery case, which costs one full 30 second tool clock and should run last.
+- [x] `/check verify script & wait` ran on 2026-09-21 and passed every acceptance criterion, plus a second pass after the review fixes. Its checklist is `verify.md` beside this spec, and it carries both wedge cases (a wedge through the eval path and one through a wait poll), each of which costs a full 30 second tool clock and runs last.
 - [ ] The engine's loopback refusal arrives as a CDP protocol error, not as `Page.navigate`'s `errorText`, so spec 0004's tailored "Check the URL and try again" message never fires for it and the generic "the navigation failed: Network error: Access to private/internal IP address 127.0.0.1 is not allowed" is what shows (found while probing this feature). A one line fix in `browser.ts` when someone is next in it.
 - [ ] The spec 0004 follow up is still open: the timeout and truncation constants become feature 3 configuration. This spec adds the eval result cap, the wait default and range, the poll interval, and the reserve to that list.
 - [ ] Found while probing this feature, and it belongs to spec 0006's surface rather than this one: the action core's `callFnOn` reads `exceptionDetails`, but this engine never sends that for `Runtime.callFunctionOn`, so a page error there arrives as the CDP protocol error `JS error: <page message>` and spec 0006's tailored "the page script failed: …" message never shows. One small addition to the error mapper closes it for every action tool, and the eval ref path already reads the same shape.
