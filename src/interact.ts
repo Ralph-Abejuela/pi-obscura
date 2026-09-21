@@ -99,7 +99,7 @@ export interface KeyOptions {
 // AC-2: a ref is resolved against the snapshot taken at the start of the
 // action, never against an older read silently. A ref the current snapshot
 // does not hold is refused in plain words.
-export function findFreshRef(ref: number, refs: ReadRef[]): ReadRef {
+function findFreshRef(ref: number, refs: ReadRef[]): ReadRef {
   const found = refs.find((r) => r.ref === ref);
   if (!found) {
     throw new Error(
@@ -108,6 +108,29 @@ export function findFreshRef(ref: number, refs: ReadRef[]): ReadRef {
     );
   }
   return found;
+}
+
+// The fresh snapshot plus the ref it must hold, refused in plain words when the
+// page moved on.
+export async function freshRef(
+  handle: EngineHandle,
+  ref: number,
+  signal?: AbortSignal,
+): Promise<ReadRef> {
+  const fresh = await snapshotRefs(handle, signal);
+  return findFreshRef(ref, fresh.refs);
+}
+
+// The full ref path the element actions and browser_eval's ref form share: the
+// fresh snapshot, the ref it must hold, and the object id DOM.resolveNode hands
+// to Runtime.callFunctionOn. One place, so the two paths cannot drift apart.
+export async function resolveRefTarget(
+  handle: EngineHandle,
+  ref: number,
+  signal?: AbortSignal,
+): Promise<{ target: ReadRef; objectId: string }> {
+  const target = await freshRef(handle, ref, signal);
+  return { target, objectId: await objectForNode(handle, target.node) };
 }
 
 // AC-3: fill and type refuse anything that is not a text like input or a
@@ -123,7 +146,7 @@ function assertTextLike(target: ReadRef, action: string): void {
 
 // DOM.resolveNode hands a backend node id to Runtime.callFunctionOn, the
 // evaluate path every side operation uses.
-export async function objectForNode(handle: EngineHandle, backendNodeId: number): Promise<string> {
+async function objectForNode(handle: EngineHandle, backendNodeId: number): Promise<string> {
   const resolved = (await send(handle, "DOM.resolveNode", {
     backendNodeId,
   })) as { object?: { objectId?: string } };
@@ -259,9 +282,7 @@ export async function clickRef(
   signal?: AbortSignal,
 ): Promise<ClickReport> {
   return runOp("the click", signal, async () => {
-    const fresh = await snapshotRefs(handle, signal);
-    const target = findFreshRef(ref, fresh.refs);
-    const objectId = await objectForNode(handle, target.node);
+    const { objectId, target } = await resolveRefTarget(handle, ref, signal);
     await callFnOn(handle, objectId, 'function () { this.scrollIntoView({ block: "center" }); }');
     const center = await boxCenter(handle, target.node);
     const scroll = await scrollPosition(handle);
@@ -307,10 +328,8 @@ export async function fillRef(
   signal?: AbortSignal,
 ): Promise<InteractionReport> {
   return runOp("the fill", signal, async () => {
-    const fresh = await snapshotRefs(handle, signal);
-    const target = findFreshRef(ref, fresh.refs);
+    const { target, objectId } = await resolveRefTarget(handle, ref, signal);
     assertTextLike(target, "fill");
-    const objectId = await objectForNode(handle, target.node);
     await callFnOn(handle, objectId, "function () { this.focus(); this.select(); }");
     await send(handle, "Input.insertText", { text: value });
     return settledReport(handle, signal);
@@ -326,10 +345,8 @@ export async function typeRef(
   signal?: AbortSignal,
 ): Promise<InteractionReport> {
   return runOp("the type", signal, async () => {
-    const fresh = await snapshotRefs(handle, signal);
-    const target = findFreshRef(ref, fresh.refs);
+    const { target, objectId } = await resolveRefTarget(handle, ref, signal);
     assertTextLike(target, "type");
-    const objectId = await objectForNode(handle, target.node);
     await callFnOn(
       handle,
       objectId,
@@ -350,8 +367,7 @@ export async function chooseRef(
   signal?: AbortSignal,
 ): Promise<InteractionReport> {
   return runOp("the choice", signal, async () => {
-    const fresh = await snapshotRefs(handle, signal);
-    const target = findFreshRef(ref, fresh.refs);
+    const target = await freshRef(handle, ref, signal);
     if (target.kind !== "select") {
       throw new Error(
         `[${target.ref}] is a ${target.kind}, not a select; choose works on selects.`,
@@ -394,9 +410,7 @@ export async function scrollPage(
       );
     }
     if (hasRef) {
-      const fresh = await snapshotRefs(handle, signal);
-      const target = findFreshRef(options.ref as number, fresh.refs);
-      const objectId = await objectForNode(handle, target.node);
+      const { objectId } = await resolveRefTarget(handle, options.ref as number, signal);
       await callFnOn(handle, objectId, 'function () { this.scrollIntoView({ block: "center" }); }');
     } else {
       await send(handle, "Runtime.evaluate", {
@@ -428,9 +442,7 @@ export async function keyPress(
       );
     }
     if (options.ref !== undefined) {
-      const fresh = await snapshotRefs(handle, signal);
-      const target = findFreshRef(options.ref, fresh.refs);
-      const objectId = await objectForNode(handle, target.node);
+      const { objectId } = await resolveRefTarget(handle, options.ref, signal);
       await callFnOn(handle, objectId, "function () { this.focus(); }");
     }
     const keyInfo = resolveKey(options.key);

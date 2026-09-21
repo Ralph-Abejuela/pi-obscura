@@ -51,6 +51,8 @@ Every step below runs in a real pi session with this extension wired in, against
 - [x] Abort a `text` or `selector` wait mid poll, after setting a page variable first → a plain cancellation, and the variable still reads back afterward, proving the same engine and page survived. Aborting a wait must stay cheap → AC-10
 - [x] Abort a `browser_eval` whose script is still running → the engine down verdict naming the abort, and the next call starts a fresh engine. An aborted script may have wedged the engine, and nothing outside the page can stop it → AC-12
 - [x] Abort a `condition` wait whose expression is still running → the same verdict, because a condition is the caller's own code and can loop. An abort during a `text` or `selector` poll stays a plain cancellation, because the plugin's own expressions cannot loop → AC-12
+- [x] Issue a wait while another wait holds the queue and watch the status line → the queued wait writes its status only once it is really polling, after the wait ahead of it finished and released the queue (observed: `waiting for text A` → `ready` → `waiting for text B` → `ready`) → AC-10
+- [x] Wait for text on a document with no body (evaluate `document.body.remove()` first) → `appeared: false` after the full clock, not a fatal page error. A bare `document.body.innerText` threw a TypeError here and the tick loop correctly read it as a page error and refused at once → AC-6
 
 ## Commands
 - [x] `npm run typecheck` → clean → build gate
@@ -91,11 +93,14 @@ Each row of the spec's value sourcing table, and the edge that would break if th
 - AC-3 covered by the await on and off steps, the promise bound step, and the awaited value sourcing steps
 - AC-4 covered by the thrown error, syntax error, ref path TypeError, and next call works steps
 - AC-5 covered by the zero mode and two mode refusals
-- AC-6 covered by the text, selector, condition, hidden text, and malformed selector steps
+- AC-6 covered by the text, selector, condition, hidden text, malformed selector, and body-less document steps
 - AC-7 covered by the clamp step, the 25 second step, the poll interval sourcing step, the deadline sourcing step, and the queued wait step
 - AC-8 covered by the matched and not matched verdict steps, the elapsed time sourcing step, and the queued wait step's elapsed time
 - AC-9 covered by the refs on both exit paths and the refs sourcing step
-- AC-10 covered by the status line steps, the read behind a wait step, and the abort step that proves aborting a text or selector wait stays cheap
+- AC-10 covered by the status line steps (including the queued wait's), the read behind a wait step, and the abort step that proves aborting a text or selector wait stays cheap
 - AC-11 covered by the throwing condition, the navigating page, the three failed tick retry policy, and the read after a successful eval that can no longer hang
 - AC-12 covered by the wedge recovery step, the wait path wedge step, the eval read wedge step, the `browser_probe` step, the engine down sourcing step, and the two abort steps (an aborted eval, and an aborted condition wait)
 - AC-13 covered by the `scripts/script-selfcheck.ts` command, which runs every case in the acceptance criterion
+
+## Known gaps
+- The three consecutive failed tick bail-out has no runtime evidence. `scripts/script-selfcheck.ts` drives a navigation storm under a waiting poll, and on this engine the outcome was a normal verdict (`appeared=false` after 1210 ms): repeated navigations did not make a single tick fail, so the retry budget never consumed and the give-up message never showed. The retryable tick error the path exists for (a transport or context error mid poll) could not be produced with the tools available. The storm case still proves the classification's contract, that no raw transport error reaches the caller. Re check when a page can be made to destroy its execution context under a poll.

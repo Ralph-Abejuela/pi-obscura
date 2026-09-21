@@ -42,14 +42,9 @@ function navMessage(report: NavReport, action: string): string {
   return `${action} ${where}.`;
 }
 
-// The status line label a wait writes for its duration: the one mode it is
-// watching and the literal it was given (spec 0007 AC-10).
-function watchingLabel(params: { text?: string; selector?: string; condition?: string }): string {
-  if (params.text !== undefined) return `text "${params.text}"`;
-  if (params.selector !== undefined) return `selector ${params.selector}`;
-  if (params.condition !== undefined) return `condition ${params.condition}`;
-  return "nothing";
-}
+// The status line label a wait writes for its duration is built inside the wait
+// itself (src/script.ts), from the one mode it resolved, so the tool layer does
+// not duplicate that choice.
 
 export default function (pi: ExtensionAPI) {
   // One supervised engine per extension instance (spec 0003).
@@ -681,10 +676,6 @@ export default function (pi: ExtensionAPI) {
       timeoutMs: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      // AC-10: the status line names what the wait is watching for its whole
-      // duration, then goes back to the engine's own state text.
-      const watching = watchingLabel(params);
-      ctx.ui.setStatus("browser", `waiting for ${watching}`);
       try {
         const report = await engine.runExclusive(signal, (handle) =>
           waitForMatch(
@@ -696,6 +687,11 @@ export default function (pi: ExtensionAPI) {
               timeoutMs: params.timeoutMs,
             },
             signal,
+            // AC-10: the wait writes the status line itself, once it starts
+            // polling, so a queued wait does not claim to be watching yet. The
+            // finally below puts the engine's own state text back on both exit
+            // paths.
+            (watching) => ctx.ui.setStatus("browser", watching),
           ),
         );
         const waited = `Waited ${(report.elapsedMs / 1000).toFixed(1)}s for ${report.mode} ${report.watched}`;

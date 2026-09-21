@@ -367,6 +367,33 @@ async function main() {
       "the verdict's refs come from the page it ended on, not the one it started on",
     );
 
+    // --- AC-11: the retry budget and its give-up path. Navigations landing
+    // under a polling wait fail ticks; each failure is retried, and three in a
+    // row make the wait give up in plain words. Which branch this engine takes
+    // is timing dependent, so the check is that the wait ends on EITHER a
+    // verdict or its own plain give-up message, never on a raw transport error
+    // reaching the caller. ---
+    await engine.runExclusive(undefined, (h) => navigate(h, WAIT_URL, undefined));
+    const storming = engine.runExclusive(undefined, (h) =>
+      waitForMatch(h, { text: "nothing anywhere says this", timeoutMs: 1_200 }, undefined),
+    );
+    for (let i = 0; i < 4; i++) {
+      await pause(120);
+      await send(handle, "Page.navigate", { url: WAIT_URL });
+    }
+    let stormOutcome = "";
+    try {
+      const report = await storming;
+      stormOutcome = `verdict appeared=${report.appeared} after ${report.elapsedMs}ms`;
+    } catch (error) {
+      stormOutcome = error instanceof Error ? error.message : String(error);
+    }
+    assert.ok(
+      /^verdict appeared=|could not read the page 3 times in a row/.test(stormOutcome),
+      `a navigation storm under a wait ends on a verdict or on the wait's own plain give-up message, not a raw transport error: ${stormOutcome}`,
+    );
+    console.log("navigation storm probe:", stormOutcome);
+
     console.log("script and wait self-check passed");
   } finally {
     await engine.stopEngine();

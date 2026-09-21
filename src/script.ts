@@ -27,7 +27,7 @@ import {
   snapshotRefs,
   TOOL_TIMEOUT_MS,
 } from "./browser.js";
-import { findFreshRef, objectForNode } from "./interact.js";
+import { resolveRefTarget } from "./interact.js";
 import { type EngineHandle, isConnectionDead } from "./supervisor.js";
 
 // spec 0007: the eval result cap, in characters of the serialized value.
@@ -237,9 +237,7 @@ async function evaluateOnce(
     return response?.result ?? {};
   }
 
-  const fresh = await snapshotRefs(handle, signal);
-  const target = findFreshRef(options.ref, fresh.refs);
-  const objectId = await objectForNode(handle, target.node);
+  const { objectId } = await resolveRefTarget(handle, options.ref, signal);
   try {
     const response = (await send(handle, "Runtime.callFunctionOn", {
       objectId,
@@ -433,9 +431,18 @@ function resolveTimeout(requested: number | undefined): { timeoutMs: number; not
 // AC-6: the text and selector polls are plugin owned constant expressions; the
 // condition poll is the caller's own expression.
 function pollExpression(mode: WaitMode, watched: string): string {
-  if (mode === "text") return `document.body.innerText.indexOf(${JSON.stringify(watched)}) >= 0`;
+  if (mode === "text") {
+    // A document with no body to read yet (about:blank) must read as "no match
+    // yet" rather than as a fatal page error, so the body is guarded.
+    return `(document.body ? document.body.innerText : "").indexOf(${JSON.stringify(watched)}) >= 0`;
+  }
   if (mode === "selector") return `document.querySelector(${JSON.stringify(watched)}) !== null`;
   return watched;
+}
+
+// AC-10: what the status line says while this wait polls.
+function watchingText(mode: WaitMode, watched: string): string {
+  return mode === "text" ? `waiting for text "${watched}"` : `waiting for ${mode} ${watched}`;
 }
 
 // One poll: a page error is raised with the private prefix so the tick loop
@@ -472,6 +479,7 @@ export async function waitForMatch(
   handle: EngineHandle,
   options: WaitOptions,
   signal?: AbortSignal,
+  onWatch?: (watching: string) => void,
 ): Promise<WaitReport> {
   const { mode, watched } = resolveMode(options);
   const { timeoutMs, notes } = resolveTimeout(options.timeoutMs);
@@ -497,6 +505,10 @@ export async function waitForMatch(
       // tool clock minus the reserve, so the final snapshot and the queue
       // release still fit inside the tool clock.
       const deadline = started + Math.min(timeoutMs, TOOL_TIMEOUT_MS - WAIT_RESERVE_MS);
+
+      // AC-10: the status line names what this wait is watching, written once
+      // polling actually starts rather than while the call is still queued.
+      onWatch?.(watchingText(mode, watched));
 
       while (true) {
         if (signal?.aborted) throw new Error(CANCELLED_MESSAGE);
