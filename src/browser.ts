@@ -19,10 +19,15 @@
 import type { EngineHandle } from "./supervisor.js";
 import { isConnectionDead, markEngineDown } from "./supervisor.js";
 
-const TOOL_TIMEOUT_MS = 30_000; // spec 0001: default tool timeout
+/** The tool clock every browser call is bounded by (spec 0001); exported so the
+ * wait's own poll deadline can reserve room for its final snapshot inside it
+ * (spec 0007 AC-7). */
+export const TOOL_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 200;
 const MAX_MARKDOWN_CHARS = 60_000;
-const CANCELLED_MESSAGE = "the browser call was cancelled";
+/** The plain text an aborted browser call fails with; exported so every tool that
+ * checks the abort signal itself reports the same cancellation. */
+export const CANCELLED_MESSAGE = "the browser call was cancelled";
 
 export interface NavReport {
   url: string;
@@ -124,6 +129,17 @@ export function classifyError(error: unknown, what: string): Error {
   return mapped;
 }
 
+/**
+ * Marks an error that is already plain and already carries its next step, so
+ * the mapper passes it through instead of rewriting it. `engineDown` also
+ * raises the queue's death verdict, the one case a tool has to raise itself
+ * (spec 0007 AC-12: a timeout with a page evaluation still outstanding).
+ */
+export function alreadyClassified(error: Error, engineDown = false): Error {
+  classifiedErrors.add(error);
+  return engineDown ? markEngineDown(error) : error;
+}
+
 function mapError(error: unknown, what: string): Error {
   const detail = error instanceof Error ? error.message : String(error);
   if (detail === CANCELLED_MESSAGE) return new Error(CANCELLED_MESSAGE);
@@ -187,7 +203,7 @@ interface PageInfo {
   title: string;
 }
 
-async function pageInfo(handle: EngineHandle): Promise<PageInfo> {
+export async function pageInfo(handle: EngineHandle): Promise<PageInfo> {
   const result = (await send(handle, "Runtime.evaluate", {
     expression: "({ href: location.href, title: document.title })",
     returnByValue: true,
