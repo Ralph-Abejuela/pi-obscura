@@ -19,7 +19,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
 | 8 | Script & wait | Slice 3 | done |
-| 9 | Session state | Slice 4 | in-progress (building) |
+| 9 | Session state | Slice 4 | in-progress (verified) |
 
 ## Foundations
 
@@ -140,7 +140,7 @@ spec [0008](../specs/0008-session-state/index.md) · code in src/ (session.ts, c
   - [x] Import from an export file · AC-1, AC-5
   - [x] Surfaces: tool, command, config view · AC-3, AC-5, AC-6
   - [x] Live acceptance and the self check · AC-7, AC-8
-- [ ] Verify it: `/check verify session state`
+- [x] Verify it: `/check verify session state`
 
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.

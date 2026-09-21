@@ -116,7 +116,7 @@ Built against the real engine, per the project's Tracer Bullet approach: one thi
 ## Follow-up
 
 - [ ] The capability probe in `src/engine.ts` reports only Page, DOM, DOMSnapshot and Runtime while `Network` and `Storage` both answer (probe verified). Fix it so later features stop under rating the engine.
-- [ ] Confirm or override the three recommendations this spec makes on the engineer's behalf: the default profile directory (`~/.pi/agent/obscura-profile`), the two accepted export shapes, and that a cookie value is never printed even on request (a deliberate refusal, not a gap).
+- [x] Confirm or override the three recommendations this spec makes on the engineer's behalf: the default profile directory (`~/.pi/agent/obscura-profile`), the two accepted export shapes, and that a cookie value is never printed even on request (a deliberate refusal, not a gap). All three confirmed on 2026-09-21. The engineer's own export turned out to be Netscape `cookies.txt`, which the confirmed shapes do not cover; accepting it is recorded as the next widening of AC-5.
 - [ ] The engine's MCP surface (37 tools, including tabs, screenshots, PDF, network requests, console messages) remains unused. Revisit whether the plugin should speak it when one of those deferred features is picked up, with the measured costs in the rationale: a 152 line client, a different ref scheme, and a read shape that does not match the plugin's numbered refs.
 - [ ] `/check verify session state` next; its checklist should include the live challenged site case, which depends on an external site staying as it is.
 - [ ] A newer engine that closes the fingerprint gap would let the honest note in AC-7 be relaxed. Re visit then, not before.
