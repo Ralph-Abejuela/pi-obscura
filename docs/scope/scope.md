@@ -18,7 +18,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
-| 8 | Script & wait | Slice 3 | in-progress (verified) |
+| 8 | Script & wait | Slice 3 | done |
 
 ## Foundations
 
@@ -124,7 +124,7 @@ Reopened and re-verified on 2026-09-21. `/check review` blocked the merge on two
 
 The review's two majors are fixed and proven too: the wait's own clock now starts when polling starts, so queue time is no longer charged against it (a queued wait matched with 1411 ms elapsed after queuing 2542 ms), and an abort raises the engine down verdict only when caller authored JavaScript was still in flight, so aborting a text or selector wait stays a cheap cancellation that keeps the page.
 
-The five minor notes from the same review are cleared: a text poll on a document with no body reads as no match instead of a fatal page error, the queued wait's status line only appears once it really polls, the eval ref path and the six element actions now share one `resolveRefTarget` helper in `src/interact.ts` instead of repeating the snapshot, ref, and node resolution, the self check's tautological assertion was replaced with a real one, and the navigation storm case proves a storm under a wait cannot leak a raw transport error. One gap is recorded rather than proven in `verify.md`: the three consecutive failed tick bail-out has no runtime evidence, because repeated navigations did not make a single tick fail on this engine. Full findings in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md). `done` again is the engineer's call.
+The five minor notes from the same review are cleared: a text poll on a document with no body reads as no match instead of a fatal page error, the queued wait's status line only appears once it really polls, the eval ref path and the six element actions now share one `resolveRefTarget` helper in `src/interact.ts` instead of repeating the snapshot, ref, and node resolution, the self check's tautological assertion was replaced with a real one, and the navigation storm case proves a storm under a wait cannot leak a raw transport error. One gap is recorded rather than proven in `verify.md`: the three consecutive failed tick bail-out has no runtime evidence, because repeated navigations did not make a single tick fail on this engine. Full findings in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md). Marked `done` on the engineer's word on 2026-09-21, with the spec advanced to `Accepted`: built, verified against every acceptance criterion, reviewed, and every finding either fixed with proof or recorded as a known gap. No `Test it` box on this feature (`Alpha` tier).
 
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.
