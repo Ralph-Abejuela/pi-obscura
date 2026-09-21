@@ -284,6 +284,7 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Pass the full URL including the scheme (https://example.com, not example.com).",
       "The engine refuses private and loopback addresses, so a local test page must be a data: URL or served publicly.",
+      "If the page turns out to be a bot challenge (Cloudflare's \"Just a moment...\" or similar), tell the user rather than retrying: this engine's stealth does not pass an active challenge, and only a real session cookie changes that.",
     ],
     parameters: Type.Object({ url: Type.String() }),
     async execute(_toolCallId, params, signal, _onUpdate, _ctx) {

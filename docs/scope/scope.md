@@ -19,6 +19,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
 | 8 | Script & wait | Slice 3 | done |
+| 9 | Session state | Slice 4 | planned |
 
 ## Foundations
 
@@ -126,11 +127,17 @@ The review's two majors are fixed and proven too: the wait's own clock now start
 
 The five minor notes from the same review are cleared: a text poll on a document with no body reads as no match instead of a fatal page error, the queued wait's status line only appears once it really polls, the eval ref path and the six element actions now share one `resolveRefTarget` helper in `src/interact.ts` instead of repeating the snapshot, ref, and node resolution, the self check's tautological assertion was replaced with a real one, and the navigation storm case proves a storm under a wait cannot leak a raw transport error. One gap is recorded rather than proven in `verify.md`: the three consecutive failed tick bail-out has no runtime evidence, because repeated navigations did not make a single tick fail on this engine. Full findings in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md). Marked `done` on the engineer's word on 2026-09-21, with the spec advanced to `Accepted`: built, verified against every acceptance criterion, reviewed, and every finding either fixed with proof or recorded as a known gap. No `Test it` box on this feature (`Alpha` tier).
 
+## Slice 4: real sessions
+
+### 9. Session state · needs a decision
+Keep a real browser session between runs: a saved profile for the cookies the engine earns, plus a way to import cookies from your real browser, so logins and consent cookies survive and sites that check for a real session load.
+**Done when:** cookies imported from your real browser are live in a new engine session, cookies the engine earns survive a restart, a site that accepts an imported real session loads, and no report ever prints a cookie value. The Cloudflare class stays a measured outcome rather than a promise: it is tested with an imported session and the result reported honestly, because the engine's TLS hello and missing WebGL may still be refused however good the cookie is.
+- [ ] Design it (spec): `/architect session state`
+
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.
 - **Visual output**: screenshot the current page and hand the image to the model, and export PDFs; needs a render enabled build (the default Windows release includes rendering).
 - **Readability read mode**: an opt in extraction mode on the read tool (Readability style, scripts run in the page) for heavy article pages · from spec 0001
-- **State & persistence**: cookies and a saved profile so logins survive between sessions.
 - **Tabs & diagnostics**: multiple tabs, network requests, and console messages.
 - **Remote attach mode**: connect to an engine running elsewhere (Docker, another machine) instead of spawning locally.
 - **Publishing**: an npm release and a polished README so others can `pi install` the package.
