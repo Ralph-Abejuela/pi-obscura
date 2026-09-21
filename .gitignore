@@ -4,3 +4,5 @@ node_modules/
 .claude/
 # research cache, not source
 docs/.agent-cache/
+# throwaway engine probes and verify evidence, not source
+scratch/

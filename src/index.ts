@@ -17,6 +17,8 @@ import {
   stealthSupport,
 } from "./config.js";
 import { InstallError, installObscura } from "./installer.js";
+import { chooseRef, clickRef, fillRef, keyPress, scrollPage, typeRef } from "./interact.js";
+import { evalInPage, waitForMatch } from "./script.js";
 import { createEngineSupervisor } from "./supervisor.js";
 
 function errorText(error: unknown): string {
@@ -39,6 +41,10 @@ function navMessage(report: NavReport, action: string): string {
   const where = report.title ? `${report.title} (${report.url})` : report.url;
   return `${action} ${where}.`;
 }
+
+// The status line label a wait writes for its duration is built inside the wait
+// itself (src/script.ts), from the one mode it resolved, so the tool layer does
+// not duplicate that choice.
 
 export default function (pi: ExtensionAPI) {
   // One supervised engine per extension instance (spec 0003).
@@ -368,6 +374,337 @@ export default function (pi: ExtensionAPI) {
         return toolResult(navMessage(report, "Reloaded"), report);
       } catch (error) {
         return errorResult(error);
+      }
+    },
+  });
+
+  function where(report: { url: string; title: string }): string {
+    return report.title ? `${report.title} (${report.url})` : report.url;
+  }
+
+  // The action tools (feature 7, spec 0006). Every action refreshes the page
+  // snapshot at the end, so each result carries fresh refs and a refused ref
+  // is always the honest one (AC-2). All of them run through the queue with
+  // the abort signal and the 30 second clock, like the slice 1 tools.
+  pi.registerTool({
+    name: "browser_click",
+    label: "Click an element",
+    description:
+      "Click an element by its ref number from the latest read. The element is scrolled into " +
+      "view, its visible center is checked for a cover, and the click is sent as a trusted " +
+      "mouse event. The result reports where the page is and fresh refs.",
+    promptSnippet: "Click an element by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; a refused ref means the page changed, call browser_read again.",
+    ],
+    parameters: Type.Object({ ref: Type.Number() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          clickRef(handle, params.ref, signal),
+        );
+        const text =
+          `Clicked [${params.ref}] "${report.label}". Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          label: report.label,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_fill",
+    label: "Fill a text input",
+    description:
+      "Replace the value of a text input or textarea by its ref: focus, select everything, " +
+      "then type the value with a trusted text event. Non text inputs (checkbox, radio, " +
+      "select, and so on) are refused with the element kind named.",
+    promptSnippet: "Fill a text input by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; fill replaces the current value, type appends.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), value: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          fillRef(handle, params.ref, params.value, signal),
+        );
+        const text =
+          `Filled [${params.ref}] with "${params.value}". Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_type",
+    label: "Type into a text input",
+    description:
+      "Append text to a text input or textarea by its ref, with a trusted text event. " +
+      "Non text inputs are refused with the element kind named.",
+    promptSnippet: "Type text into an input by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; type appends to the current value, fill replaces it.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), text: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          typeRef(handle, params.ref, params.text, signal),
+        );
+        const text =
+          `Typed "${params.text}" into [${params.ref}]. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_choose",
+    label: "Choose a select option",
+    description:
+      "Set a native select's value to a named option by its ref, matched by label text first " +
+      "and then by the value attribute, and fire the change event. A missing option is " +
+      "refused with the valid labels and values listed.",
+    promptSnippet: "Choose a select option by ref",
+    promptGuidelines: [
+      "Pass the option's visible text or its value; browser_read lists each select's options.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), value: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          chooseRef(handle, params.ref, params.value, signal),
+        );
+        const text =
+          `Chose "${params.value}" in [${params.ref}]. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_scroll",
+    label: "Scroll the page",
+    description:
+      "Bring an element by its ref into view, or move the page by a signed amount of pixels " +
+      "(by). The result reports the new scroll position and fresh refs.",
+    promptSnippet: "Scroll the page by amount or to a ref",
+    promptGuidelines: ["Pass one of ref or by; a negative by scrolls up."],
+    parameters: Type.Object({
+      ref: Type.Optional(Type.Number()),
+      by: Type.Optional(Type.Number()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          scrollPage(handle, { ref: params.ref, by: params.by }, signal),
+        );
+        const moved =
+          params.ref !== undefined
+            ? `Scrolled [${params.ref}] into view.`
+            : `Scrolled by ${params.by}px.`;
+        const text = `${moved} Scroll at (${report.scrollX}, ${report.scrollY}). Now at ${where(report)}.`;
+        return toolResult(text, {
+          ref: params.ref,
+          by: params.by,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_key",
+    label: "Press a key",
+    description:
+      "Send a named key (Enter, Tab, Escape, the arrows, Home, End, PageUp, PageDown, " +
+      "Backspace, Delete) or a single character, as trusted events to the active element, or to " +
+      "the element an optional ref focuses first. Enter on a focused submit control submits. " +
+      "Modifier combos are refused: this engine drops modifier state, so a combo would reach " +
+      "the page as a plain key.",
+    promptSnippet: "Press a named key or a single character",
+    promptGuidelines: [
+      "Use ref to focus an element first; without it the key goes to the active element.",
+      "Do not ask for ctrl, meta, shift, or alt: the engine drops modifier state and the call is refused.",
+    ],
+    parameters: Type.Object({
+      key: Type.String(),
+      ref: Type.Optional(Type.Number()),
+      // Kept so a modifier request is refused in plain words (spec 0006 AC-7)
+      // rather than silently ignored.
+      modifiers: Type.Optional(Type.Array(Type.String())),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          keyPress(
+            handle,
+            { key: params.key, ref: params.ref, modifiers: params.modifiers },
+            signal,
+          ),
+        );
+        const text =
+          `Pressed ${params.key}. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          key: params.key,
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  // The script and wait tools (feature 8, spec 0007). These are the only two
+  // tools that run caller authored JavaScript in the page, so each result says
+  // plainly what the engine did with it: a degraded value is named rather than
+  // dumped, a page error is the page's own message, and a wait that ran out of
+  // time is honest data rather than a broken call.
+  pi.registerTool({
+    name: "browser_eval",
+    label: "Run JavaScript in the page",
+    description:
+      "Run your own JavaScript in the page and report the value it produced with its type. The " +
+      "expression is a script, so its completion value comes back (`1 + 1` gives 2, " +
+      "`const a = 1; a + 1` gives 2). Pass ref to run the expression as the body of a function " +
+      "with that element as `this`, where a value needs `return` (`return this.textContent`). " +
+      "Set await to true to wait for a promise result, bounded at 30 seconds by the engine " +
+      "itself. A DOM element, a Promise, a Map, and a Set are reported in plain words, never " +
+      "dumped.",
+    promptSnippet: "Run JavaScript in the page and read the value",
+    promptGuidelines: [
+      "Pass a ref from the latest read; with a ref the expression is a function body, so a value needs return.",
+      "Set await: true for a promise result; without it a promise reads as an empty object.",
+      "A page error arrives as the page's own message, so fix the expression and call again.",
+    ],
+    parameters: Type.Object({
+      expression: Type.String(),
+      ref: Type.Optional(Type.Number()),
+      await: Type.Optional(Type.Boolean()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          evalInPage(
+            handle,
+            { expression: params.expression, ref: params.ref, await: params.await },
+            signal,
+          ),
+        );
+        const lines = [`The script returned ${report.type}: ${report.value}`];
+        if (report.note) lines.push(report.note);
+        lines.push(`Now at ${where(report)}.`);
+        return toolResult(lines.join("\n"), report);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_wait",
+    label: "Wait for text, an element, or a condition",
+    description:
+      "Pause until exactly one of these appears: text (a literal case sensitive substring of " +
+      "the page's text), selector (a CSS selector that matches an element), or condition (your " +
+      "own JavaScript expression whose completion value is truthy). It polls every 100 ms for " +
+      "up to timeoutMs (default 10000, clamped to 500 to 25000). A wait that runs out of time " +
+      "is a normal result with appeared: false, where the page is now, and fresh refs, never an " +
+      "error. The wait holds the browser queue while it polls, so no other browser call " +
+      "interleaves.",
+    promptSnippet: "Wait for text, a selector, or a condition",
+    promptGuidelines: [
+      "Pass exactly one of text, selector, or condition.",
+      "A text match is text anywhere in the document, hidden and offscreen text included; this engine cannot test visibility.",
+    ],
+    parameters: Type.Object({
+      text: Type.Optional(Type.String()),
+      selector: Type.Optional(Type.String()),
+      condition: Type.Optional(Type.String()),
+      timeoutMs: Type.Optional(Type.Number()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          waitForMatch(
+            handle,
+            {
+              text: params.text,
+              selector: params.selector,
+              condition: params.condition,
+              timeoutMs: params.timeoutMs,
+            },
+            signal,
+            // AC-10: the wait writes the status line itself, once it starts
+            // polling, so a queued wait does not claim to be watching yet. The
+            // finally below puts the engine's own state text back on both exit
+            // paths.
+            (watching) => ctx.ui.setStatus("browser", watching),
+          ),
+        );
+        const waited = `Waited ${(report.elapsedMs / 1000).toFixed(1)}s for ${report.mode} ${report.watched}`;
+        const verdict = report.appeared
+          ? ". It appeared."
+          : ". It never appeared; read the page to see what is there, or wait again with a longer timeoutMs.";
+        const lines = [`${waited}${verdict} Now at ${where(report)}.`];
+        for (const note of report.notes) lines.push(note);
+        return toolResult(lines.join("\n"), report);
+      } catch (error) {
+        return errorResult(error);
+      } finally {
+        ctx.ui.setStatus("browser", engine.statusText());
       }
     },
   });

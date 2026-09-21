@@ -28,7 +28,7 @@ This spec decides how the plugin supervises the Obscura engine process over a wh
 
 **Chosen option**: Option 1, fail the call and restart on demand. The engine is supervised through a small state machine, not a backoff supervisor.
 
-The plugin keeps one persistent engine per extension instance, started lazily on first use. Death is detected by the process exit listener and the WebSocket close handler (settled in spec 0001). The call that hits a dead engine fails in plain words; every browser tool call runs an ensure step at the front of the shared queue, which spawns a missing engine, waits on an in flight spawn, or fails fast when the engine is marked broken. A broken marker trips after two consecutive failed starts. Stop is grace then hard kill, on session shutdown and on reload.
+The plugin keeps one persistent engine per extension instance, started lazily on first use. Death is detected by the process exit listener and the WebSocket close handler (settled in spec 0001), plus a third trigger added on 2026-09-21: the in flight call that hits the transport failure raises the verdict itself, so a death costs one failed call rather than two. The call that hits a dead engine fails in plain words; every browser tool call runs an ensure step at the front of the shared queue, which spawns a missing engine, waits on an in flight spawn, or fails fast when the engine is marked broken. A broken marker trips after two consecutive failed starts. Stop is grace then hard kill, on session shutdown and on reload.
 
 **Implementation skills**: `obscura` (`h4ckf0r0day/obscura`, `.agents/skills/obscura/`) · `pi-extension-authoring` (`romiluz13/pi-agent-skills`, `.agents/skills/pi-extension-authoring/`)
 
@@ -49,7 +49,7 @@ The plugin keeps one persistent engine per extension instance, started lazily on
 - `stopped` → `starting`: first browser tool call, or any call after a death or a reload
 - `starting` → `ready`: endpoint line printed and CDP connection open
 - `starting` → `dead`: spawn error event, endpoint timeout, or exit before ready; `consecutiveFailures` increments
-- `ready` → `dead`: engine exit event or WebSocket close; does not increment the counter (a runtime death is a normal event, handled by restart on next call)
+- `ready` → `dead`: engine exit event, WebSocket close, or the transport failure an in flight call just hit; does not increment the counter (a runtime death is a normal event, handled by restart on next call). A still live child is killed before the state clears, so a dead socket cannot leave an orphan process
 - `dead` → `starting`: next tool call, unless broken
 - `dead` → `stopped`: broken; stays stopped until a reload or pi restart clears module memory
 - `stopped` / `starting` / `ready` / `dead` → `stopped`: session shutdown or module reload, which kills the child (grace then hard kill) and closes the client
@@ -70,7 +70,7 @@ The existing `probeEngine()` path stays untouched: feature 4 (binary helper) use
 |---|---|---|
 | Lazy spawn (AC-1) | the decision to spawn | `ensureEngine` runs when `phase === stopped` at the front of the queue |
 | Status line starting / ready / down (AC-1, AC-3) | the current state text | derived from `engineState.phase` at each transition |
-| Death message (AC-3) | "the engine died, the page state is gone, the next browser call restarts it" | static text decided in this spec, triggered by the exit event or WS close |
+| Death message (AC-3) | "the engine died, the page state is gone, the next browser call restarts it" | static text decided in this spec, triggered by the exit event, the WS close, or a transport failure an in flight call hit (that call raises the verdict, so exactly one call fails and the next one respawns) |
 | Wait, do not spawn twice (AC-4) | sharing one spawn | `engineState.startingPromise`, awaited by every queued caller while `phase === starting` |
 | Broken verdict (AC-5) | fail fast instead of a spawn attempt | derived from `consecutiveFailures >= 2` |
 | Counter reset (AC-5) | 0 again | the moment a spawn reaches `ready` |
@@ -82,6 +82,7 @@ The existing `probeEngine()` path stays untouched: feature 4 (binary helper) use
 - At most one spawn in flight at a time; the queue front owns it.
 - No engine process the plugin spawned survives a clean shutdown.
 - The plugin never kills a process it did not spawn.
+- A child whose CDP connection is gone is reaped before the state clears, so a dead socket never leaves an orphan engine process.
 - A leftover engine from an earlier session may share the loopback port; the plugin leaves it alone and its own engine still starts and serves.
 - `consecutiveFailures` resets to 0 only when a start reaches `ready`.
 
@@ -91,7 +92,7 @@ The existing `probeEngine()` path stays untouched: feature 4 (binary helper) use
 
 **Critical test scenarios**:
 - Happy path: open a session, call a browser tool, engine spawns lazily, status line shows starting then ready, a second call reuses the same engine, session end leaves no process. Verifies **AC-1**, **AC-2**.
-- Failure case: kill the engine process from outside mid session; the in flight call fails with the plain death message, the next call respawns and navigates a blank engine. Verifies **AC-3**.
+- Failure case: kill the engine process from outside mid session; the in flight call fails with the plain death message and is the only call that fails (no raw protocol text reaches the caller), the next call respawns and navigates a blank engine. Verifies **AC-3**.
 - Failure case: point the binary at a broken engine (or a path that fails to start) and call twice; the third call fails fast without waiting the timeout. Verifies **AC-5**.
 - Concurrency: dispatch several browser calls in parallel, kill the engine mid flight; exactly one restart happens and all calls settle. Verifies **AC-4**.
 - Restart behavior: after a death and restart, the new engine has no page; the agent re reads. Verifies **AC-3**.
@@ -104,7 +105,7 @@ Ordered for the Tracer Bullet approach: the thinnest end to end thread first (on
 
 1. Persistent supervised engine: a module that spawns once on first ensure, reuses the process and CDP client across calls, and tears down on module shutdown. Replace the probe per call path in `engine.ts` with it. Satisfies **AC-1**.
 2. Lazy start and status line: spawn on first browser tool call only; drive `browser: starting` → `browser: ready` → `browser: down` through `ctx.ui.setStatus` at transitions. Satisfies **AC-1**, **AC-3**.
-3. Death detection and restart on next use: the exit listener and WS close mark `dead`; the in flight call fails with the plain message; the next call's ensure respawns. Satisfies **AC-3**.
+3. Death detection and restart on next use: the exit listener and WS close mark `dead`, and a transport failure an in flight call hits raises the same verdict at once (added 2026-09-21); the in flight call fails with the plain message; the next call's ensure respawns. Satisfies **AC-3**.
 4. Queue ownership: route every browser tool through `ensureEngine()` at the front of the existing queue; while `phase === starting`, await the shared starting promise instead of spawning again. Satisfies **AC-4**.
 5. Crash loop guard: count consecutive failed spawns, mark broken at two, and fail fast in later calls with a plain message; clear on reload or pi restart. Satisfies **AC-5**.
 6. Clean stop: on `session_shutdown` and on module reload, stop the engine grace then hard kill (2 second grace), clear the status line, and verify no spawned process survives. Satisfies **AC-2**, **AC-7**.

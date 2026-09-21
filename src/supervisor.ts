@@ -2,9 +2,11 @@
 // The persistent engine supervisor (spec 0003, server lifecycle): one Obscura
 // engine per extension instance, spawned lazily on the first browser tool
 // call, reused across calls, and stopped cleanly on session shutdown or
-// reload. Death is detected through the child exit event and the CDP
-// WebSocket close; the call whose CDP work hit the dead engine fails in plain
-// words, and the next browser call respawns without user action. The probe
+// reload. Death is detected through the child exit event, the CDP WebSocket
+// close, and a transport failure on an in flight call (the verdict is raised at
+// once then, so recovery costs one failed call rather than two); the call whose
+// CDP work hit the dead engine fails in plain words, and the next browser call
+// respawns without user action. The probe
 // path in engine.ts stays untouched: feature 4 uses it to verify an install.
 //
 // State lives in the closure of createEngineSupervisor, one instance per
@@ -32,8 +34,35 @@ import {
 } from "./config.js";
 import { findBinary, probeDomains, waitForEndpoint, withTimeout } from "./engine.js";
 
-// The engine process: stdin closed, stdout and stderr piped for endpoint detection.
+// Engine process: stdin closed, stdout and stderr piped for endpoint detection.
 type EngineProcess = ChildProcessByStdio<null, Readable, Readable>;
+
+// The transport signals a killed engine raises on an in flight CDP call. Shared
+// with the browser error mapper, so the death verdict and the plain message have
+// one source of truth.
+const CONNECTION_DEAD_PATTERN =
+  /connection closed|socket|websocket|disconnect|no page for session|target.*closed|ECONNRESET|EPIPE|ECONNREFUSED|ENOTCONN|EHOSTUNREACH/i;
+
+/** True when a failure means the engine connection is gone, not a page error. */
+export function isConnectionDead(error: unknown): boolean {
+  const detail = error instanceof Error ? error.message : String(error);
+  return CONNECTION_DEAD_PATTERN.test(detail);
+}
+
+// Classified engine down errors, so the queue can raise the death verdict the
+// moment an in flight call discovers the socket is gone rather than waiting for
+// the exit or disconnect event to land. A WeakSet keeps the error immutable.
+const engineDownErrors = new WeakSet<Error>();
+
+/** Marks a classified error as an engine death for the queue to act on. */
+export function markEngineDown(error: Error): Error {
+  engineDownErrors.add(error);
+  return error;
+}
+
+function isEngineDown(error: unknown): boolean {
+  return error instanceof Error && engineDownErrors.has(error);
+}
 
 export type EnginePhase = "stopped" | "starting" | "ready" | "dead";
 
@@ -246,11 +275,17 @@ export function createEngineSupervisor(): EngineSupervisor {
     applyStatus();
   };
 
-  // AC-3: the runtime death verdict, triggered by the exit event or the CDP
-  // socket close. A death after ready is a normal event: it does not count
-  // against the spawn counter (AC-5 counts only failed starts).
+  // AC-3: the runtime death verdict, triggered by the exit event, the CDP
+  // socket close, or a transport failure an in flight call just hit. A death
+  // after ready is a normal event: it does not count against the spawn counter
+  // (AC-5 counts only failed starts).
   const markDead = (): void => {
     if (state.phase !== "ready") return;
+    // A child whose socket just failed is unreachable: reap it, rather than
+    // leak an engine process nobody can drive. (AC-6 is about processes this
+    // plugin did not spawn; this one is ours.)
+    const child = state.child;
+    if (child && child.exitCode === null) child.kill();
     state.phase = "dead";
     state.child = null;
     state.client = null;
@@ -476,7 +511,15 @@ export function createEngineSupervisor(): EngineSupervisor {
   ): Promise<T> {
     const run = queueTail.then(async () => {
       const handle = await ensureEngine(signal);
-      return fn(handle);
+      try {
+        return await fn(handle);
+      } catch (error) {
+        // The socket is gone even when the exit or disconnect event has not
+        // landed yet. Raise the verdict now, so the next call respawns instead
+        // of failing a second time against the same dead engine.
+        if (isEngineDown(error)) markDead();
+        throw error;
+      }
     });
     queueTail = run.catch(() => {});
     return run;

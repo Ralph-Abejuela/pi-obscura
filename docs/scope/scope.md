@@ -17,8 +17,8 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 4 | Obscura binary helper | Slice 1 | done |
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
-| 7 | Interaction tools | Slice 2 | planned |
-| 8 | Script & wait | Slice 3 | planned |
+| 7 | Interaction tools | Slice 2 | done |
+| 8 | Script & wait | Slice 3 | done |
 
 ## Foundations
 
@@ -94,15 +94,37 @@ spec [0004](../specs/0004-core-navigation-and-reading/index.md) · code in src/ 
 
 ### 7. Interaction tools
 Act on the page the way a person would: click, fill, type, choose, scroll, and keep the agent's element references honest after each action.
+spec [0006](../specs/0006-interaction-tools/index.md) · code in src/
 **Done when:** the agent can complete a multi step flow, like searching, filling a form, and submitting it, with element references refreshed after each action.
-- [ ] Build it: `/develop interaction tools`
+- [x] Design it (spec): `/architect interaction tools`
+- [x] Build it: `/develop interaction tools`
+  - [x] Refs contract and action core · AC-2, AC-6
+  - [x] Click strand · AC-1, AC-2, AC-7
+  - [x] Fill, type, and keys · AC-3, AC-4, AC-7
+  - [x] Choose and scroll · AC-5, AC-6, AC-7
+  - [x] Tool wiring and self check · AC-1, AC-3, AC-4, AC-5, AC-8, AC-9
+- [x] Verify it: `/check verify interaction tools`
 
 ## Slice 3: reach in and wait
 
 ### 8. Script & wait
 Run your own JavaScript in the page and synchronize with changing content before reading on.
+spec [0007](../specs/0007-script-and-wait/index.md) · code in src/ (script.ts, index.ts, interact.ts)
 **Done when:** the agent can evaluate JS on the page and pause until text or a condition appears, then read the result.
-- [ ] Build it: `/develop script & wait`
+- [x] Design it (spec): `/architect script & wait`
+- [x] Build it: `/develop script & wait`
+  - [x] Eval core, end to end · AC-1, AC-4
+  - [x] Await and the ref form · AC-2, AC-3
+  - [x] Wait, text mode, end to end · AC-5, AC-6, AC-7, AC-8, AC-9, AC-10
+  - [x] Selector and condition modes · AC-5, AC-6, AC-11
+  - [x] Hang recovery and the self check · AC-11, AC-12, AC-13
+- [x] Verify it: `/check verify script & wait`
+
+Reopened and re-verified on 2026-09-21. `/check review` blocked the merge on two real blockers, both in the wedge paths: a `browser_wait` poll that wedges raised no engine down verdict (AC-12), and the read after a successful eval ran outside the tool clock and could hang the call forever (AC-11). Both are fixed and proven by a real 30 second wedge on each path.
+
+The review's two majors are fixed and proven too: the wait's own clock now starts when polling starts, so queue time is no longer charged against it (a queued wait matched with 1411 ms elapsed after queuing 2542 ms), and an abort raises the engine down verdict only when caller authored JavaScript was still in flight, so aborting a text or selector wait stays a cheap cancellation that keeps the page.
+
+The five minor notes from the same review are cleared: a text poll on a document with no body reads as no match instead of a fatal page error, the queued wait's status line only appears once it really polls, the eval ref path and the six element actions now share one `resolveRefTarget` helper in `src/interact.ts` instead of repeating the snapshot, ref, and node resolution, the self check's tautological assertion was replaced with a real one, and the navigation storm case proves a storm under a wait cannot leak a raw transport error. One gap is recorded rather than proven in `verify.md`: the three consecutive failed tick bail-out has no runtime evidence, because repeated navigations did not make a single tick fail on this engine. Full findings in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md). Marked `done` on the engineer's word on 2026-09-21, with the spec advanced to `Accepted`: built, verified against every acceptance criterion, reviewed, and every finding either fixed with proof or recorded as a known gap. No `Test it` box on this feature (`Alpha` tier).
 
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.

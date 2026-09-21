@@ -30,6 +30,9 @@ pi -e ./src/index.ts   # or wire this repo into the extensions array in pi setti
 
 # Navigation self check (drives a real page through the built tools)
 node node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti-cli.mjs scripts/navigation-selfcheck.ts
+
+# Interaction self check (the six action tools, the refusal cases, and the recorded engine limits)
+node node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti-cli.mjs scripts/interaction-selfcheck.ts
 ```
 
 ## Specs
@@ -48,6 +51,7 @@ Stored in `docs/specs/`. Format: `docs/specs/NNNN-title/` with index, rationale,
 - Tools use the browser_ prefix; src organizes into feature folders as slices land.
 - Public APIs are documented: every exported symbol a tool or another module calls carries a short plain comment on what it does and when it fails.
 - Strict TypeScript: tsconfig strict, no any.
+- Engine behaviour is probe verified, never assumed: throwaway probes live in the gitignored `scratch/`, and each verified engine limit is recorded in the owning spec's rationale probe record.
 
 ## Tooling
 
