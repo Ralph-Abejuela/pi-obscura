@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { send } from "../src/browser.js";
 import { CONFIG_PATH } from "../src/config.js";
+import { clearCookies, listCookies, setCookie } from "../src/session.js";
 import { createEngineSupervisor } from "../src/supervisor.js";
 
 const hadConfig = existsSync(CONFIG_PATH);
@@ -81,8 +82,61 @@ async function main(): Promise<void> {
         "the engine wrote its cookie jar inside the profile directory",
       );
 
+      // AC-3, AC-4: the cookie core. Its own domains, so a filtered clear cannot
+      // interfere with the persistence case above.
+      const secret = "sup3r-s3cret-session-value";
+      const accepted = await engine.runExclusive(undefined, (h) =>
+        setCookie(h, { name: "pi_list_check", value: secret, domain: ".list.test" }, undefined),
+      );
+      assert.equal(accepted, true, "the engine accepts a cookie and says so");
+      await engine.runExclusive(undefined, (h) =>
+        setCookie(
+          h,
+          { name: "pi_other_check", value: "other-value", domain: ".other.test" },
+          undefined,
+        ),
+      );
+
+      const all = await engine.runExclusive(undefined, (h) => listCookies(h, undefined, undefined));
+      assert.ok(
+        all.some((row) => row.name === "pi_list_check"),
+        "a set cookie shows in the list by name",
+      );
+      assert.ok(!JSON.stringify(all).includes(secret), "no listed row carries the cookie value");
+      assert.ok(
+        all.every((row) => !("value" in row)),
+        "a row has no value field at all, so a report cannot print one by accident",
+      );
+      assert.ok(
+        all.every((row) => row.domain.length > 0 && row.path.length > 0),
+        "a row says which domain and path the cookie belongs to",
+      );
+
+      const filtered = await engine.runExclusive(undefined, (h) =>
+        listCookies(h, "list.test", undefined),
+      );
+      assert.equal(filtered.length, 1, "the domain filter narrows the list to the matching cookie");
+      assert.equal(filtered[0]?.name, "pi_list_check", "the filter kept the right cookie");
+
+      const cleared = await engine.runExclusive(undefined, (h) =>
+        clearCookies(h, "list.test", undefined),
+      );
+      assert.equal(cleared, 1, "a filtered clear reports how many cookies went");
+      const remaining = await engine.runExclusive(undefined, (h) =>
+        listCookies(h, "list.test", undefined),
+      );
+      assert.equal(remaining.length, 0, "the cleared cookie is gone from the jar");
+      const untouched = await engine.runExclusive(undefined, (h) =>
+        listCookies(h, "other.test", undefined),
+      );
+      assert.equal(
+        untouched.length,
+        1,
+        "a cookie for another domain is untouched by a filtered clear",
+      );
+
       console.log(
-        "session state self-check passed: the profile directory is created, the engine gets it, and a cookie survives a restart",
+        "session state self-check passed: profile dir created, cookie survived a restart, list redacted, filtered clear",
       );
     } finally {
       await engine.stopEngine();
