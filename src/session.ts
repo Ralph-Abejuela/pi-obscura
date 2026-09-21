@@ -10,6 +10,7 @@
 // carries no value at all, which makes leaking one a compile error rather than a
 // discipline to remember (spec 0008 AC-4).
 
+import { existsSync, readFileSync } from "node:fs";
 import { runOp, send } from "./browser.js";
 import type { EngineHandle } from "./supervisor.js";
 
@@ -139,4 +140,107 @@ export async function setCookie(
     const response = (await send(handle, "Network.setCookie", params)) as { success?: boolean };
     return response?.success === true;
   });
+}
+
+/** What an import did, in the numbers a report shows. */
+export interface ImportReport {
+  /** How many entries the engine accepted. */
+  imported: number;
+  /** How many the engine turned down after validation passed. */
+  refused: number;
+  /** Plain words for the first engine refusal, when there was one. */
+  reason: string | undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// AC-5: every entry is checked before the first write, and a refusal names the
+// entry and the field, so a bad file never leaves half a session behind.
+function entryAt(item: unknown, index: number): CookieEntry {
+  const where = `cookie ${index + 1}`;
+  if (!isRecord(item)) throw new Error(`${where} is not an object, so it cannot be a cookie`);
+  const name = item.name;
+  const value = item.value;
+  const domain = item.domain;
+  if (typeof name !== "string" || name.trim() === "") throw new Error(`${where} has no name`);
+  if (typeof value !== "string") throw new Error(`${where} ("${name}") has no value`);
+  if (typeof domain !== "string" || domain.trim() === "") {
+    throw new Error(`${where} ("${name}") has no domain, so there is nowhere to set it`);
+  }
+  return {
+    name,
+    value,
+    domain,
+    ...(typeof item.path === "string" ? { path: item.path } : {}),
+    ...(typeof item.secure === "boolean" ? { secure: item.secure } : {}),
+    ...(typeof item.httpOnly === "boolean" ? { httpOnly: item.httpOnly } : {}),
+    ...(typeof item.sameSite === "string" ? { sameSite: item.sameSite } : {}),
+    ...(typeof item.expires === "number" && item.expires > 0 ? { expires: item.expires } : {}),
+  };
+}
+
+/**
+ * Read a cookie export. Two shapes are accepted because they are the two a
+ * caller will have: a bare list of cookies (the engine's own `cookies.json`, and
+ * the common browser extensions) and an object carrying a `cookies` list (a
+ * Playwright or MCP storage state export).
+ */
+export function parseCookieExport(raw: unknown): CookieEntry[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.cookies)
+      ? raw.cookies
+      : undefined;
+  if (!list) {
+    throw new Error(
+      'the file does not hold a cookie export. Give either a list of cookies, or an object with a "cookies" list.',
+    );
+  }
+  if (list.length === 0)
+    throw new Error("the cookie export is empty, so there is nothing to import");
+  return list.map((item, index) => entryAt(item, index));
+}
+
+/**
+ * AC-1, AC-5: read an export file and set every cookie in it. A missing file, an
+ * unreadable one, an unrecognised shape or a bad entry refuses before the first
+ * write, so the jar is untouched when an import is refused. An entry the engine
+ * itself turns down is counted and reported rather than rolled back, because the
+ * plugin cannot undo a write the engine accepted.
+ */
+export async function importCookies(
+  handle: EngineHandle,
+  path: string,
+  signal?: AbortSignal,
+): Promise<ImportReport> {
+  if (!existsSync(path)) {
+    throw new Error(
+      `the cookie file ${path} does not exist. Check the path, and export the cookies from the browser that holds the session.`,
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "it is not valid JSON";
+    throw new Error(
+      `the cookie file ${path} could not be read as JSON (${detail}). Fix the file, or export it again.`,
+    );
+  }
+
+  const entries = parseCookieExport(raw);
+  let imported = 0;
+  let refused = 0;
+  let reason: string | undefined;
+  for (const entry of entries) {
+    if (await setCookie(handle, entry, signal)) {
+      imported += 1;
+    } else {
+      refused += 1;
+      reason ??= `the engine turned down the cookie "${entry.name}" for ${entry.domain}`;
+    }
+  }
+  return { imported, refused, reason };
 }

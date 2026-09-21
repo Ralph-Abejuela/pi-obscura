@@ -137,7 +137,7 @@ spec [0008](../specs/0008-session-state/index.md)
 - [ ] Build it: `/develop session state`
   - [x] Profile directory end to end · AC-2, AC-6
   - [x] Cookie core: set, list redacted, clear · AC-1, AC-3, AC-4
-  - [ ] Import from an export file · AC-1, AC-5
+  - [x] Import from an export file · AC-1, AC-5
   - [ ] Surfaces: tool, command, config view · AC-3, AC-5, AC-6
   - [ ] Live acceptance and the self check · AC-7, AC-8
 - [ ] Verify it: `/check verify session state`

@@ -15,7 +15,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { send } from "../src/browser.js";
 import { CONFIG_PATH } from "../src/config.js";
-import { clearCookies, listCookies, setCookie } from "../src/session.js";
+import {
+  clearCookies,
+  importCookies,
+  listCookies,
+  parseCookieExport,
+  setCookie,
+} from "../src/session.js";
 import { createEngineSupervisor } from "../src/supervisor.js";
 
 const hadConfig = existsSync(CONFIG_PATH);
@@ -37,6 +43,36 @@ async function main(): Promise<void> {
   try {
     assert.equal(existsSync(profileDir), false, "the profile directory starts absent");
     writeFileSync(CONFIG_PATH, `${JSON.stringify({ profileDir }, null, 2)}\n`, "utf8");
+
+    // AC-5: the parser refusals need no engine, so they run first and fast.
+    const exportCookies = [
+      { name: "a", value: "1", domain: ".import.test", path: "/" },
+      { name: "b", value: "2", domain: ".import.test", secure: true },
+    ];
+    assert.equal(parseCookieExport(exportCookies).length, 2, "a bare list of cookies is accepted");
+    assert.equal(
+      parseCookieExport({ cookies: exportCookies }).length,
+      2,
+      "an object carrying a cookies list is accepted, so a browser or MCP storage export imports",
+    );
+    const refuse = (raw: unknown, expected: RegExp, what: string): void => {
+      assert.throws(() => parseCookieExport(raw), expected, what);
+    };
+    refuse({ notCookies: [] }, /list of cookies/, "an object without a cookies list is refused");
+    refuse([], /empty/, "an empty export is refused");
+    refuse(
+      [{ value: "1", domain: "x" }],
+      /cookie 1 has no name/,
+      "an entry with no name is refused",
+    );
+    refuse([{ name: "a", domain: "x" }], /has no value/, "an entry with no value is refused");
+    refuse([{ name: "a", value: "1" }], /has no domain/, "an entry with no domain is refused");
+    refuse(
+      [exportCookies[0], { name: "bad" }],
+      /cookie 2 .*has no value/,
+      "the refusal names which entry is wrong and what it is missing",
+    );
+    refuse("not a cookie export", /list of cookies/, "a string export is refused, not ignored");
 
     const engine = createEngineSupervisor();
     try {
@@ -135,8 +171,57 @@ async function main(): Promise<void> {
         "a cookie for another domain is untouched by a filtered clear",
       );
 
+      // AC-1, AC-5: an import lands, and a refused one leaves the jar untouched.
+      const exportPath = join(workDir, "session-export.json");
+      writeFileSync(
+        exportPath,
+        `${JSON.stringify({ cookies: [{ name: "pi_import_check", value: secret, domain: ".import.test" }] }, null, 2)}\n`,
+        "utf8",
+      );
+      const report = await engine.runExclusive(undefined, (h) =>
+        importCookies(h, exportPath, undefined),
+      );
+      assert.equal(report.imported, 1, "the import sets the cookie it was given");
+      assert.equal(report.refused, 0, "nothing was refused when the export was good");
+      const importedRows = await engine.runExclusive(undefined, (h) =>
+        listCookies(h, "import.test", undefined),
+      );
+      assert.equal(importedRows.length, 1, "the imported cookie is in the jar for its domain");
+      assert.equal(importedRows[0]?.name, "pi_import_check", "and it is the one that was imported");
+      assert.ok(
+        !JSON.stringify(importedRows).includes(secret),
+        "the imported value is not echoed back in the listing",
+      );
+
+      const badPath = join(workDir, "session-export-bad.json");
+      writeFileSync(
+        badPath,
+        `${JSON.stringify([{ name: "pi_half_check", value: "x", domain: ".failed.test" }, { name: "no-value" }], null, 2)}\n`,
+        "utf8",
+      );
+      await assert.rejects(
+        engine.runExclusive(undefined, (h) => importCookies(h, badPath, undefined)),
+        /cookie 2 .*has no value/,
+        "one bad entry refuses the whole import",
+      );
+      const untouchedAfterRefusal = await engine.runExclusive(undefined, (h) =>
+        listCookies(h, "failed.test", undefined),
+      );
+      assert.equal(
+        untouchedAfterRefusal.length,
+        0,
+        "the refused import wrote nothing, so the good entry in it did not land either",
+      );
+      await assert.rejects(
+        engine.runExclusive(undefined, (h) =>
+          importCookies(h, join(workDir, "does-not-exist.json"), undefined),
+        ),
+        /does not exist/,
+        "a missing cookie file is refused in plain words",
+      );
+
       console.log(
-        "session state self-check passed: profile dir created, cookie survived a restart, list redacted, filtered clear",
+        "session state self-check passed: profile dir created, cookie survived a restart, list redacted, filtered clear, import lands, bad import refused whole",
       );
     } finally {
       await engine.stopEngine();
