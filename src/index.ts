@@ -17,6 +17,7 @@ import {
   stealthSupport,
 } from "./config.js";
 import { InstallError, installObscura } from "./installer.js";
+import { chooseRef, clickRef, fillRef, keyPress, scrollPage, typeRef } from "./interact.js";
 import { createEngineSupervisor } from "./supervisor.js";
 
 function errorText(error: unknown): string {
@@ -366,6 +367,235 @@ export default function (pi: ExtensionAPI) {
       try {
         const report = await engine.runExclusive(signal, (handle) => reloadPage(handle, signal));
         return toolResult(navMessage(report, "Reloaded"), report);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  function where(report: { url: string; title: string }): string {
+    return report.title ? `${report.title} (${report.url})` : report.url;
+  }
+
+  // The action tools (feature 7, spec 0006). Every action refreshes the page
+  // snapshot at the end, so each result carries fresh refs and a refused ref
+  // is always the honest one (AC-2). All of them run through the queue with
+  // the abort signal and the 30 second clock, like the slice 1 tools.
+  pi.registerTool({
+    name: "browser_click",
+    label: "Click an element",
+    description:
+      "Click an element by its ref number from the latest read. The element is scrolled into " +
+      "view, its visible center is checked for a cover, and the click is sent as a trusted " +
+      "mouse event. The result reports where the page is and fresh refs.",
+    promptSnippet: "Click an element by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; a refused ref means the page changed, call browser_read again.",
+    ],
+    parameters: Type.Object({ ref: Type.Number() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          clickRef(handle, params.ref, signal),
+        );
+        const text =
+          `Clicked [${params.ref}] "${report.label}". Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          label: report.label,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_fill",
+    label: "Fill a text input",
+    description:
+      "Replace the value of a text input or textarea by its ref: focus, select everything, " +
+      "then type the value with a trusted text event. Non text inputs (checkbox, radio, " +
+      "select, and so on) are refused with the element kind named.",
+    promptSnippet: "Fill a text input by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; fill replaces the current value, type appends.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), value: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          fillRef(handle, params.ref, params.value, signal),
+        );
+        const text =
+          `Filled [${params.ref}] with "${params.value}". Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_type",
+    label: "Type into a text input",
+    description:
+      "Append text to a text input or textarea by its ref, with a trusted text event. " +
+      "Non text inputs are refused with the element kind named.",
+    promptSnippet: "Type text into an input by ref",
+    promptGuidelines: [
+      "Pass a ref from the latest read; type appends to the current value, fill replaces it.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), text: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          typeRef(handle, params.ref, params.text, signal),
+        );
+        const text =
+          `Typed "${params.text}" into [${params.ref}]. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_choose",
+    label: "Choose a select option",
+    description:
+      "Set a native select's value to a named option by its ref, matched by label text first " +
+      "and then by the value attribute, and fire the change event. A missing option is " +
+      "refused with the valid labels and values listed.",
+    promptSnippet: "Choose a select option by ref",
+    promptGuidelines: [
+      "Pass the option's visible text or its value; browser_read lists each select's options.",
+    ],
+    parameters: Type.Object({ ref: Type.Number(), value: Type.String() }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          chooseRef(handle, params.ref, params.value, signal),
+        );
+        const text =
+          `Chose "${params.value}" in [${params.ref}]. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_scroll",
+    label: "Scroll the page",
+    description:
+      "Bring an element by its ref into view, or move the page by a signed amount of pixels " +
+      "(by). The result reports the new scroll position and fresh refs.",
+    promptSnippet: "Scroll the page by amount or to a ref",
+    promptGuidelines: ["Pass one of ref or by; a negative by scrolls up."],
+    parameters: Type.Object({
+      ref: Type.Optional(Type.Number()),
+      by: Type.Optional(Type.Number()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          scrollPage(handle, { ref: params.ref, by: params.by }, signal),
+        );
+        const moved =
+          params.ref !== undefined
+            ? `Scrolled [${params.ref}] into view.`
+            : `Scrolled by ${params.by}px.`;
+        const text = `${moved} Scroll at (${report.scrollX}, ${report.scrollY}). Now at ${where(report)}.`;
+        return toolResult(text, {
+          ref: params.ref,
+          by: params.by,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_key",
+    label: "Press a key",
+    description:
+      "Send a named key (Enter, Tab, Escape, the arrows, Home, End, PageUp, PageDown, " +
+      "Backspace, Delete) or a single character, as trusted events to the active element, or to " +
+      "the element an optional ref focuses first. Enter on a focused submit control submits. " +
+      "Modifier combos are refused: this engine drops modifier state, so a combo would reach " +
+      "the page as a plain key.",
+    promptSnippet: "Press a named key or a single character",
+    promptGuidelines: [
+      "Use ref to focus an element first; without it the key goes to the active element.",
+      "Do not ask for ctrl, meta, shift, or alt: the engine drops modifier state and the call is refused.",
+    ],
+    parameters: Type.Object({
+      key: Type.String(),
+      ref: Type.Optional(Type.Number()),
+      // Kept so a modifier request is refused in plain words (spec 0006 AC-7)
+      // rather than silently ignored.
+      modifiers: Type.Optional(Type.Array(Type.String())),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          keyPress(
+            handle,
+            { key: params.key, ref: params.ref, modifiers: params.modifiers },
+            signal,
+          ),
+        );
+        const text =
+          `Pressed ${params.key}. Now at ${where(report)}. ` +
+          `Scroll at (${report.scrollX}, ${report.scrollY}).`;
+        return toolResult(text, {
+          key: params.key,
+          ref: params.ref,
+          url: report.url,
+          title: report.title,
+          refs: report.refs,
+          scrollX: report.scrollX,
+          scrollY: report.scrollY,
+        });
       } catch (error) {
         return errorResult(error);
       }

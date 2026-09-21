@@ -17,6 +17,7 @@
 // engine refuses private or loopback addresses with a plain error.
 
 import type { EngineHandle } from "./supervisor.js";
+import { isConnectionDead, markEngineDown } from "./supervisor.js";
 
 const TOOL_TIMEOUT_MS = 30_000; // spec 0001: default tool timeout
 const READY_POLL_MS = 200;
@@ -35,6 +36,17 @@ export interface ReadRef {
   kind: "link" | "button" | "input" | "select" | "textarea";
   text: string;
   href?: string;
+  /** The input's type attribute (inputs only, default text), used by the fill and type refusals. */
+  inputType?: string;
+  /** The select's options (selects only), used by browser_choose to match and list valid choices. */
+  options?: SelectOption[];
+}
+
+export interface SelectOption {
+  /** The option's visible text, the first match key for browser_choose. */
+  label: string;
+  /** The option's value attribute (falls back to the label), the second match key. */
+  value: string;
 }
 
 export interface ReadReport {
@@ -53,7 +65,7 @@ type SendRaw = (
   sessionId?: string,
 ) => Promise<unknown>;
 
-async function send(
+export async function send(
   handle: EngineHandle,
   method: string,
   params?: Record<string, unknown>,
@@ -96,8 +108,23 @@ async function bounded<T>(signal: AbortSignal | undefined, body: () => Promise<T
 // Spec 0001: one small mapper turns CDP and connection errors into plain
 // messages with a next step. Engine down and page errors already carry plain
 // text from the supervisor and the engine; this adds the timeout and the
-// protocol-unsupported categories on top.
+// protocol-unsupported categories on top. The engine down verdict itself lives
+// in the supervisor (it also owns the exit and disconnect handlers), so a dead
+// socket never reaches the caller as raw protocol text.
+// A classified error is already plain and already carries its next step.
+// Wrapping one again (an action op wrapping the snapshot op it calls, for
+// example) would bury the message and drop the engine down marker the queue
+// reads, so classification is idempotent.
+const classifiedErrors = new WeakSet<Error>();
+
 export function classifyError(error: unknown, what: string): Error {
+  if (error instanceof Error && classifiedErrors.has(error)) return error;
+  const mapped = mapError(error, what);
+  classifiedErrors.add(mapped);
+  return mapped;
+}
+
+function mapError(error: unknown, what: string): Error {
   const detail = error instanceof Error ? error.message : String(error);
   if (detail === CANCELLED_MESSAGE) return new Error(CANCELLED_MESSAGE);
   if (/timed out after/i.test(detail)) {
@@ -111,17 +138,17 @@ export function classifyError(error: unknown, what: string): Error {
         "If an essential tool depends on it, this needs an architecture reconsideration.",
     );
   }
-  if (
-    /connection closed|socket|websocket|disconnect|no page for session|target.*closed/i.test(detail)
-  ) {
-    return new Error(
-      `The engine died while ${what} was in flight; the page state is gone. The next browser call starts a fresh engine.`,
+  if (isConnectionDead(detail)) {
+    return markEngineDown(
+      new Error(
+        `The engine died while ${what} was in flight; the page state is gone. The next browser call starts a fresh engine.`,
+      ),
     );
   }
   return new Error(`${what} failed: ${detail}`);
 }
 
-async function runOp<T>(
+export async function runOp<T>(
   what: string,
   signal: AbortSignal | undefined,
   body: () => Promise<T>,
@@ -172,7 +199,7 @@ async function pageInfo(handle: EngineHandle): Promise<PageInfo> {
 // Polls document.readyState until the page finishes loading, then reports the
 // current URL and title. Navigation on this engine never hangs the call: the
 // poll gives up at the tool timeout with a plain message.
-async function waitForReady(
+export async function waitForReady(
   handle: EngineHandle,
   signal: AbortSignal | undefined,
 ): Promise<PageInfo> {
@@ -381,6 +408,26 @@ function subtreeText(nodes: SnapshotNodes, strings: string[], index: number): st
   return parts.join(" ");
 }
 
+// The select's options in document order: the value attribute, falling back
+// to the option's text. browser_choose matches label text first, then value
+// (spec 0006), so both are collected here.
+function selectOptions(nodes: SnapshotNodes, strings: string[], index: number): SelectOption[] {
+  const options: SelectOption[] = [];
+  const stack: number[] = [...childrenOf(nodes, index)].reverse();
+  while (stack.length > 0) {
+    const i = stack.pop() as number;
+    if ((strings[nodes.nodeName?.[i]] ?? "").toUpperCase() === "OPTION") {
+      const attrs = attrMap(nodes, i, strings);
+      const label = subtreeText(nodes, strings, i);
+      const value = readAttr(attrs, "value") || label;
+      if (label || value) options.push({ label, value });
+    }
+    const kids = childrenOf(nodes, i);
+    for (let k = kids.length - 1; k >= 0; k--) stack.push(kids[k]);
+  }
+  return options;
+}
+
 // This engine's snapshot has no childNodeIndexes; the flat nodes array plus
 // parentIndex reconstructs the tree (verified live on 0.2.2).
 function childrenOf(nodes: SnapshotNodes, index: number): number[] {
@@ -487,13 +534,19 @@ function serialize(nodes: SnapshotNodes, strings: string[]): WalkContext {
       const type = (readAttr(attrs, "type") ?? "text").toLowerCase();
       if (type === "hidden") continue;
       const label = readAttr(attrs, "placeholder") || readAttr(attrs, "value") || `${type} input`;
-      addRef(ctx, nodes, index, { ref: 0, node: 0, kind: "input", text: label });
+      addRef(ctx, nodes, index, { ref: 0, node: 0, kind: "input", text: label, inputType: type });
       appendInline(ctx, `[${ctx.refCount}] ${label}`);
       continue;
     }
     if (nodeName === "SELECT") {
       const text = subtreeText(nodes, strings, index) || "select";
-      addRef(ctx, nodes, index, { ref: 0, node: 0, kind: "select", text: `select (${text})` });
+      addRef(ctx, nodes, index, {
+        ref: 0,
+        node: 0,
+        kind: "select",
+        text: `select (${text})`,
+        options: selectOptions(nodes, strings, index),
+      });
       appendInline(ctx, `[${ctx.refCount}] select (${text})`);
       continue;
     }
@@ -532,34 +585,78 @@ function serialize(nodes: SnapshotNodes, strings: string[]): WalkContext {
   return ctx;
 }
 
+interface SnapshotState {
+  nodes: SnapshotNodes;
+  strings: string[];
+  url: string;
+  title: string;
+}
+
+async function captureSnapshot(handle: EngineHandle): Promise<SnapshotState> {
+  const snap = (await send(handle, "DOMSnapshot.captureSnapshot", {
+    computedStyles: [],
+  })) as SnapshotResult;
+  const document = snap?.documents?.[0];
+  const nodes = document?.nodes;
+  const strings = snap?.strings ?? [];
+  if (!nodes || nodes.nodeType.length === 0) {
+    throw new Error(
+      "the engine returned an empty page snapshot; the page may still be loading, call browser_read again",
+    );
+  }
+  const url = strings[document.documentURL ?? -1] ?? "";
+  const title = strings[document.title ?? -1] ?? "";
+  return { nodes, strings, url, title };
+}
+
 export async function readPage(handle: EngineHandle, signal?: AbortSignal): Promise<ReadReport> {
   return runOp("the page read", signal, async () => {
-    const snap = (await send(handle, "DOMSnapshot.captureSnapshot", {
-      computedStyles: [],
-    })) as SnapshotResult;
-    const document = snap?.documents?.[0];
-    const nodes = document?.nodes;
-    const strings = snap?.strings ?? [];
-    if (!nodes || nodes.nodeType.length === 0) {
-      throw new Error(
-        "the engine returned an empty page snapshot; the page may still be loading, call browser_read again",
-      );
-    }
-    const url = strings[document.documentURL ?? -1] ?? "";
-    const title = strings[document.title ?? -1] ?? "";
-    const ctx = serialize(nodes, strings);
+    const captured = await captureSnapshot(handle);
+    const ctx = serialize(captured.nodes, captured.strings);
     let body = ctx.out;
     if (ctx.truncated) body += `\n\n…(page content truncated at ${MAX_MARKDOWN_CHARS} characters)`;
     if (!body.trim()) body = "(no readable text on the page)";
     if (ctx.refs.length > 0) {
       const list = ctx.refs
-        .map(
-          (r) =>
-            `- [${r.ref}] → node ${r.node} · ${r.kind} "${r.text}"${r.href ? ` → ${r.href}` : ""}`,
-        )
+        .map((r) => {
+          let extra = "";
+          if (r.kind === "input" && r.inputType) extra = ` · type ${r.inputType}`;
+          if (r.kind === "select" && r.options && r.options.length > 0) {
+            extra = ` · options: ${r.options.map((o) => `${o.label} (${o.value})`).join(", ")}`;
+          }
+          return `- [${r.ref}] → node ${r.node} · ${r.kind} "${r.text}"${r.href ? ` → ${r.href}` : ""}${extra}`;
+        })
         .join("\n");
       body += `\n\nInteractive elements:\n${list}`;
     }
-    return { markdown: body, url, title, refs: ctx.refs, truncated: ctx.truncated };
+    return {
+      markdown: body,
+      url: captured.url,
+      title: captured.title,
+      refs: ctx.refs,
+      truncated: ctx.truncated,
+    };
+  });
+}
+
+export interface RefSnapshot {
+  refs: ReadRef[];
+  url: string;
+  title: string;
+}
+
+// The freshness contract for the action tools (spec 0006 AC-2): actions start
+// and end against a snapshot taken from the live page, so a ref the current
+// snapshot no longer holds is refused instead of silently acting on stale
+// state. The markdown walk is the same one readPage uses; the markdown itself
+// is discarded here (the cost is the same browser_read already pays).
+export async function snapshotRefs(
+  handle: EngineHandle,
+  signal?: AbortSignal,
+): Promise<RefSnapshot> {
+  return runOp("the page snapshot", signal, async () => {
+    const captured = await captureSnapshot(handle);
+    const ctx = serialize(captured.nodes, captured.strings);
+    return { refs: ctx.refs, url: captured.url, title: captured.title };
   });
 }
