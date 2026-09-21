@@ -19,6 +19,7 @@ import {
 import { InstallError, installObscura } from "./installer.js";
 import { chooseRef, clickRef, fillRef, keyPress, scrollPage, typeRef } from "./interact.js";
 import { evalInPage, waitForMatch } from "./script.js";
+import { type CookieRow, clearCookies, importCookies, listCookies, REDACTED } from "./session.js";
 import { createEngineSupervisor } from "./supervisor.js";
 
 function errorText(error: unknown): string {
@@ -41,6 +42,21 @@ function navMessage(report: NavReport, action: string): string {
   const where = report.title ? `${report.title} (${report.url})` : report.url;
   return `${action} ${where}.`;
 }
+
+// AC-3, AC-4: one cookie as a report line. The value column is the marker, so a
+// report has nowhere to put a real value even by mistake.
+function cookieRowLine(row: CookieRow): string {
+  const flags = [row.secure ? "secure" : "", row.httpOnly ? "httpOnly" : "", row.sameSite ?? ""]
+    .filter((flag) => flag.length > 0)
+    .join(", ");
+  const expiry = row.expiresAt ? `expires ${row.expiresAt}` : "session cookie";
+  return `- ${row.name} · ${row.domain}${row.path} · ${expiry}${flags ? ` · ${flags}` : ""} · value ${REDACTED}`;
+}
+
+// Said in every report that names the profile, because the file really is plain
+// text and the caller should know before they keep a session in it.
+const PROFILE_WARNING =
+  "The profile directory holds the cookie jar as plain text, so treat it as a credential store; this plugin never prints a cookie value.";
 
 // The status line label a wait writes for its duration is built inside the wait
 // itself (src/script.ts), from the one mode it resolved, so the tool layer does
@@ -273,6 +289,84 @@ export default function (pi: ExtensionAPI) {
       }
       lines.push("A changed value applies at the next engine start; there is no auto restart.");
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  // Session cookies (feature 9, spec 0008). The tool and the command share one
+  // wording, so the two surfaces cannot drift apart.
+  async function cookieAction(
+    action: string,
+    options: { domain?: string; path?: string },
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    const profileDir = engine.snapshot().config.profileDir;
+    const name = action.trim().toLowerCase();
+    if (name === "list") {
+      const rows = await engine.runExclusive(signal, (handle) =>
+        listCookies(handle, options.domain, signal),
+      );
+      const within = options.domain ? ` for ${options.domain}` : " in the jar";
+      if (rows.length === 0) {
+        return `No cookies${within}. The jar lives in ${profileDir}.
+${PROFILE_WARNING}`;
+      }
+      return `${rows.length} cookie(s)${within}, from ${profileDir}:\n${rows
+        .map(cookieRowLine)
+        .join("\n")}\n${PROFILE_WARNING}`;
+    }
+    if (name === "clear") {
+      const cleared = await engine.runExclusive(signal, (handle) =>
+        clearCookies(handle, options.domain, signal),
+      );
+      const within = options.domain ? ` for ${options.domain}` : " (the whole jar)";
+      return `Cleared ${cleared} cookie(s)${within}. The jar lives in ${profileDir}.`;
+    }
+    if (name === "import") {
+      if (!options.path) {
+        throw new Error(
+          "browser_cookies import needs a path to a cookie export file. Pass path with the file to read.",
+        );
+      }
+      const report = await engine.runExclusive(signal, (handle) =>
+        importCookies(handle, options.path as string, signal),
+      );
+      const parts = [`Imported ${report.imported} cookie(s) from ${options.path}.`];
+      if (report.refused > 0) {
+        parts.push(`${report.refused} were turned down: ${report.reason ?? "no reason given"}.`);
+      }
+      parts.push(`The session is kept in ${profileDir} as plain text.`);
+      return parts.join(" ");
+    }
+    throw new Error(
+      `unknown cookie action "${action}". Use one of: list (optionally a domain), import (with a path), clear (optionally a domain).`,
+    );
+  }
+
+  pi.registerCommand("browser-cookies", {
+    description: "List, import, or clear session cookies (values are never shown)",
+    handler: async (args, ctx) => {
+      const tokens = args
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token.length > 0);
+      const action = tokens[0];
+      const target = tokens.slice(1).join(" ").trim();
+      if (action !== "list" && action !== "import" && action !== "clear") {
+        ctx.ui.notify(
+          "Usage: /browser-cookies list [domain] · import <path> · clear [domain]. Cookie values are never shown.",
+          "warning",
+        );
+        return;
+      }
+      ctx.ui.setStatus("browser", `cookies: ${action}`);
+      try {
+        const options = action === "import" ? { path: target } : { domain: target || undefined };
+        ctx.ui.notify(await cookieAction(action, options, ctx.signal), "info");
+      } catch (error) {
+        ctx.ui.notify(errorText(error), "warning");
+      } finally {
+        ctx.ui.setStatus("browser", engine.statusText());
+      }
     },
   });
 
@@ -711,6 +805,42 @@ export default function (pi: ExtensionAPI) {
         return errorResult(error);
       } finally {
         ctx.ui.setStatus("browser", engine.statusText());
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_cookies",
+    label: "Session cookies",
+    description:
+      "Work with the browser's cookie jar. list shows the cookies for a domain or the whole jar, " +
+      "with values never shown; import reads a cookie export file so a real session carries into " +
+      "the browser; clear removes the cookies for a domain or the whole jar. The jar is kept in " +
+      "the profile directory, so an imported session survives between runs.",
+    promptSnippet: "List, import, or clear session cookies",
+    promptGuidelines: [
+      "Import a cookie export from your own browser when a site refuses a browser with no session; the plugin cannot earn those cookies itself.",
+      "Cookie values are never printed. The listing reports names, domains, paths and flags only.",
+    ],
+    parameters: Type.Object({
+      action: Type.String(),
+      domain: Type.Optional(Type.String()),
+      path: Type.Optional(Type.String()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const message = await cookieAction(
+          params.action,
+          { domain: params.domain, path: params.path },
+          signal,
+        );
+        return toolResult(message, {
+          action: params.action,
+          domain: params.domain,
+          profileDir: engine.snapshot().config.profileDir,
+        });
+      } catch (error) {
+        return errorResult(error);
       }
     },
   });
