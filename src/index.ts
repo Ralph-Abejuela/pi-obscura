@@ -37,10 +37,23 @@ function errorResult(error: unknown): ToolResult {
   return { content: [{ type: "text", text }], details: undefined };
 }
 
+// AC-7: a bot challenge is reported as one. The title is what the challenge page
+// puts there, and this engine's stealth does not pass an active challenge, so the
+// caller is told the reason and the route that works instead of being left to
+// retry a page that will never move on.
+const CHALLENGE_TITLE =
+  /just a moment|attention required|checking your browser|verify(ing)? (you|your browser)|security verification/i;
+
+function challengeNote(title: string): string {
+  return CHALLENGE_TITLE.test(title)
+    ? " This is a bot challenge page, not the site's content: this engine's stealth does not pass an active challenge, so retrying it will not help. Import a session cookie from your own browser with browser_cookies and open the page again."
+    : "";
+}
+
 // The navigation tools share one response shape: where the page is now.
 function navMessage(report: NavReport, action: string): string {
   const where = report.title ? `${report.title} (${report.url})` : report.url;
-  return `${action} ${where}.`;
+  return `${action} ${where}.${challengeNote(report.title)}`;
 }
 
 // AC-3, AC-4: one cookie as a report line. The value column is the marker, so a

@@ -131,15 +131,15 @@ The five minor notes from the same review are cleared: a text poll on a document
 
 ### 9. Session state
 Keep a real browser session between runs: a saved profile for the cookies the engine earns, plus a way to import cookies from your real browser, so logins and consent cookies survive and sites that check for a real session load.
-spec [0008](../specs/0008-session-state/index.md)
+spec [0008](../specs/0008-session-state/index.md) · code in src/ (session.ts, config.ts, supervisor.ts, index.ts)
 **Done when:** cookies imported from your real browser are live in a new engine session, cookies the engine earns survive a restart, a site that accepts an imported real session loads, and no report ever prints a cookie value. The Cloudflare class stays a measured outcome rather than a promise: it is tested with an imported session and the result reported honestly, because the engine's TLS hello and missing WebGL may still be refused however good the cookie is.
 - [x] Design it (spec): `/architect session state`
-- [ ] Build it: `/develop session state`
+- [x] Build it: `/develop session state`
   - [x] Profile directory end to end · AC-2, AC-6
   - [x] Cookie core: set, list redacted, clear · AC-1, AC-3, AC-4
   - [x] Import from an export file · AC-1, AC-5
-  - [ ] Surfaces: tool, command, config view · AC-3, AC-5, AC-6
-  - [ ] Live acceptance and the self check · AC-7, AC-8
+  - [x] Surfaces: tool, command, config view · AC-3, AC-5, AC-6
+  - [x] Live acceptance and the self check · AC-7, AC-8
 - [ ] Verify it: `/check verify session state`
 
 ## Deferred

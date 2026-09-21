@@ -1,7 +1,7 @@
 # 0008. Session state: a saved profile and imported cookies
 
 **Date**: 2026-09-21
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
