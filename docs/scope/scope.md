@@ -120,7 +120,9 @@ spec [0007](../specs/0007-script-and-wait/index.md) · code in src/ (script.ts, 
   - [x] Hang recovery and the self check · AC-11, AC-12, AC-13
 - [x] Verify it: `/check verify script & wait`
 
-Reopened and re-verified on 2026-09-21. `/check review` blocked the merge on two real blockers, both in the wedge paths: a `browser_wait` poll that wedges raised no engine down verdict (AC-12), and the read after a successful eval ran outside the tool clock and could hang the call forever (AC-11). Both are fixed and proven by a real 30 second wedge on each path. Still open from the same review, recorded in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md): two majors (an abort with an outstanding page evaluation raises no death verdict; the wait's own clock starts before the queue, so queue time is charged against it) and five minor notes. `done` again is the engineer's call.
+Reopened and re-verified on 2026-09-21. `/check review` blocked the merge on two real blockers, both in the wedge paths: a `browser_wait` poll that wedges raised no engine down verdict (AC-12), and the read after a successful eval ran outside the tool clock and could hang the call forever (AC-11). Both are fixed and proven by a real 30 second wedge on each path.
+
+The review's two majors are fixed and proven too: the wait's own clock now starts when polling starts, so queue time is no longer charged against it (a queued wait matched with 1411 ms elapsed after queuing 2542 ms), and an abort raises the engine down verdict only when caller authored JavaScript was still in flight, so aborting a text or selector wait stays a cheap cancellation that keeps the page. Recorded in [docs/reviews/2026-09-21-feat-script-and-wait.md](../reviews/2026-09-21-feat-script-and-wait.md), with five minor notes still open (a body-less document's `innerText` poll reading as a fatal tick error, the unexercised three failed tick bail-out, the status line written before the queue is taken, the duplicated ref helper, and a naming nit). `done` again is the engineer's call.
 
 ## Deferred
 Out of scope for this build pass, kept so the plan stays honest.

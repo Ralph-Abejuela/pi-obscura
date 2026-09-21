@@ -3,7 +3,9 @@ _Steps derived from spec 0007 acceptance criteria. `/check verify` runs these; `
 
 _Verified 2026-09-21 by `/check verify`: every step below was exercised through the registered tools (`browser_eval`, `browser_wait`, `browser_read`, `browser_click`, `browser_navigate`, `browser_probe`) against the real engine, plus `scripts/script-selfcheck.ts`. The abort step was driven through the tool's abort signal rather than the pi Escape key._
 
-_Re-verified the same day after `/check review` blocked the merge on two real blockers. Both were in the wedge paths this checklist covered too thinly, so the two cases below were added and then proven: the first pass drove the AC-12 wedge through `browser_eval` only, which is the one path that already handled it, so a wedged wait poll and an unbounded read after a successful eval both slipped through. Re-run the manual steps in a real pi session after any change to the queue, the clock, or the engine._
+_Re-verified the same day after `/check review` blocked the merge on two real blockers. Both were in the wedge paths this checklist covered too thinly, so the two cases below were added and then proven: the first pass drove the AC-12 wedge through `browser_eval` only, which is the one path that already handled it, so a wedged wait poll and an unbounded read after a successful eval both slipped through._
+
+_Fixed a second time for the review's two majors, each proven by the four cases at the end of the list: a queued wait keeps its own clock, and an abort only costs the engine when CALLER authored JavaScript was still in flight. Re-run the manual steps in a real pi session after any change to the queue, the clock, or the engine._
 
 Every step below runs in a real pi session with this extension wired in, against a page you opened yourself (a real site, or a `data:` URL fixture). The engine refuses loopback and private addresses, so a local server cannot serve the fixture. Run the wedge recovery step last: it costs one full 30 second tool clock and it restarts the engine, which throws the page state away.
 
@@ -45,6 +47,10 @@ Every step below runs in a real pi session with this extension wired in, against
 - [x] `browser_wait` with `condition: "while (true) {}"` → the poll that never returns expires the tool clock with the engine down verdict, and the next browser call starts a fresh engine and works. Proves AC-12 on the WAIT path, not just the eval path → AC-11, AC-12
 - [x] `browser_eval` whose expression installs a `document.title` getter that never returns (`Object.defineProperty(document, 'title', { get: function () { while (true) {} } })`), so the page read AFTER the evaluation is the thing that wedges → the call still returns inside the tool clock with the engine down verdict, the next call starts a fresh engine. Before the fix this read ran outside every clock and hung the call forever → AC-11, AC-12
 - [x] `browser_eval` with a ref that the next page does not hold → refused. Take the ref from the OLD page and check the NEW page does not reuse that ref number: refs are per page and are reused, so a stale ref only reads as stale when the new page issues fewer of them → AC-2
+- [x] Issue a second `browser_wait` while a first one holds the queue → the second one's own clock starts when it starts polling, so it still matches, and its `elapsedMs` excludes the queue time (measured: it queued about 2542 ms, then matched with `elapsedMs` 1411 ms on a 3000 ms clock) → AC-7, AC-8
+- [x] Abort a `text` or `selector` wait mid poll, after setting a page variable first → a plain cancellation, and the variable still reads back afterward, proving the same engine and page survived. Aborting a wait must stay cheap → AC-10
+- [x] Abort a `browser_eval` whose script is still running → the engine down verdict naming the abort, and the next call starts a fresh engine. An aborted script may have wedged the engine, and nothing outside the page can stop it → AC-12
+- [x] Abort a `condition` wait whose expression is still running → the same verdict, because a condition is the caller's own code and can loop. An abort during a `text` or `selector` poll stays a plain cancellation, because the plugin's own expressions cannot loop → AC-12
 
 ## Commands
 - [x] `npm run typecheck` → clean → build gate
@@ -86,10 +92,10 @@ Each row of the spec's value sourcing table, and the edge that would break if th
 - AC-4 covered by the thrown error, syntax error, ref path TypeError, and next call works steps
 - AC-5 covered by the zero mode and two mode refusals
 - AC-6 covered by the text, selector, condition, hidden text, and malformed selector steps
-- AC-7 covered by the clamp step, the 25 second step, the poll interval sourcing step, and the deadline sourcing step
-- AC-8 covered by the matched and not matched verdict steps, and the elapsed time sourcing step
+- AC-7 covered by the clamp step, the 25 second step, the poll interval sourcing step, the deadline sourcing step, and the queued wait step
+- AC-8 covered by the matched and not matched verdict steps, the elapsed time sourcing step, and the queued wait step's elapsed time
 - AC-9 covered by the refs on both exit paths and the refs sourcing step
-- AC-10 covered by the status line steps, the read behind a wait step, and the abort step
+- AC-10 covered by the status line steps, the read behind a wait step, and the abort step that proves aborting a text or selector wait stays cheap
 - AC-11 covered by the throwing condition, the navigating page, the three failed tick retry policy, and the read after a successful eval that can no longer hang
-- AC-12 covered by the wedge recovery step, the wait path wedge step, the eval read wedge step, the `browser_probe` step, and the engine down sourcing step
+- AC-12 covered by the wedge recovery step, the wait path wedge step, the eval read wedge step, the `browser_probe` step, the engine down sourcing step, and the two abort steps (an aborted eval, and an aborted condition wait)
 - AC-13 covered by the `scripts/script-selfcheck.ts` command, which runs every case in the acceptance criterion

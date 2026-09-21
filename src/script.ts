@@ -266,12 +266,16 @@ const PROMISE_BOUND_MESSAGE =
 // engine death verdict, so the error mapper passes it through and the queue
 // acts on it. Nothing outside the page can stop page JavaScript, which is why a
 // still running evaluation means a fresh engine on the next call.
-function hangingScriptError(): Error {
+function hangingScriptError(reason: "clock" | "abort"): Error {
+  const when =
+    reason === "clock"
+      ? `The page script was still running when the tool clock expired after ${
+          TOOL_TIMEOUT_MS / 1000
+        } seconds`
+      : "The page script was still running when the call was aborted";
   return alreadyClassified(
     new Error(
-      `The page script was still running when the tool clock expired after ${
-        TOOL_TIMEOUT_MS / 1000
-      } seconds, so the engine is treated as down: the next browser call starts a fresh engine and ` +
+      `${when}, so the engine is treated as down: the next browser call starts a fresh engine and ` +
         "the page state is gone. The page script may still be running, because an endless loop in a " +
         "page script cannot be stopped from outside; keep a page loop short or split it up.",
     ),
@@ -286,6 +290,35 @@ function timedOutAtTheClock(error: unknown): boolean {
   return /timed out|did not settle within/i.test(errorText(error));
 }
 
+// The caller gave up on the call.
+function cancelled(error: unknown): boolean {
+  return errorText(error) === CANCELLED_MESSAGE;
+}
+
+/**
+ * In one call, tracks the page work still outstanding and who authored its
+ * JavaScript. Only caller authored code can loop forever, so the abort path
+ * raises the death verdict for that alone; the plugin's own expressions cannot
+ * loop, which is what keeps aborting a wait cheap.
+ */
+function trackPageWork(): {
+  run: <T>(owner: "caller" | "plugin", body: () => Promise<T>) => Promise<T>;
+  outstanding: () => "caller" | "plugin" | undefined;
+} {
+  let inflight: "caller" | "plugin" | undefined;
+  return {
+    run: async (owner, body) => {
+      inflight = owner;
+      try {
+        return await body();
+      } finally {
+        inflight = undefined;
+      }
+    },
+    outstanding: () => inflight,
+  };
+}
+
 // AC-1, AC-2, AC-3, AC-4: run the caller's JavaScript and report the value with
 // its type, or fail in plain words on a page error, a stale ref, an unsettled
 // promise, or a page script that outlives the tool clock (AC-12).
@@ -296,31 +329,31 @@ export async function evalInPage(
 ): Promise<EvalReport> {
   const awaiting = options.await === true;
   const what = options.ref === undefined ? "the script evaluation" : "the element script";
-  // AC-12: whether a page evaluation was still outstanding when the clock
-  // expired. The finally only runs once the evaluation came back, so a page
-  // script that never returns leaves this true.
-  let outstanding = false;
+  // AC-12: the page work still outstanding when this call ended. Its finally
+  // clears the flag only once a call came back, so a script that never returns,
+  // or a read that never answers, leaves it set.
+  const page = trackPageWork();
 
   try {
     const result = await runOp(what, signal, async () => {
-      outstanding = true;
-      try {
-        const payload = await evaluateOnce(handle, options, signal);
-        // AC-11: the page read belongs to the same call, so it runs inside the
-        // same clock and abort race. Left outside, a page that wedges after
-        // returning its value would hang this call with nothing to bound it.
-        const info = await pageInfo(handle);
-        return { payload, info };
-      } catch (error) {
-        // The engine raises its own bound on an awaited promise; report it in
-        // plain words rather than as a raw protocol message.
-        if (awaiting && /did not settle within/i.test(errorText(error))) {
-          throw alreadyClassified(new Error(PROMISE_BOUND_MESSAGE));
+      const payload = await page.run("caller", async () => {
+        try {
+          return await evaluateOnce(handle, options, signal);
+        } catch (error) {
+          // The engine raises its own bound on an awaited promise; report it in
+          // plain words rather than as a raw protocol message.
+          if (awaiting && /did not settle within/i.test(errorText(error))) {
+            throw alreadyClassified(new Error(PROMISE_BOUND_MESSAGE));
+          }
+          throw error;
         }
-        throw error;
-      } finally {
-        outstanding = false;
-      }
+      });
+      // AC-11: the page read belongs to the same call, so it runs inside the
+      // same clock and abort race. Left outside, a page that wedged after
+      // returning its value would hang this call with nothing to bound it. It
+      // is the plugin's own expression, so it cannot loop.
+      const info = await page.run("plugin", () => pageInfo(handle));
+      return { payload, info };
     });
     const described = describeValue(result.payload);
     return {
@@ -330,14 +363,25 @@ export async function evalInPage(
       title: result.info.title,
     };
   } catch (error) {
-    if (!outstanding || !timedOutAtTheClock(error)) throw error;
-    // AC-3: an awaited call is exempt, because the engine's own 30 second bound
-    // is exactly this case and the session recovers by itself; it raises no
-    // death verdict.
-    if (awaiting) throw alreadyClassified(new Error(PROMISE_BOUND_MESSAGE));
-    // AC-12: an evaluation still outstanding at the clock means the engine is
-    // treated as down and the next browser call starts a fresh one.
-    throw hangingScriptError();
+    const inflight = page.outstanding();
+    // Nothing was in flight, so this is the call's own failure and it stands.
+    if (!inflight) throw error;
+    // AC-12, the tool clock: the engine is not answering, so it is treated as
+    // down and the next browser call starts a fresh one.
+    if (timedOutAtTheClock(error)) {
+      // AC-3: an awaited call is exempt, because the engine's own 30 second
+      // bound is exactly this case and the session recovers by itself.
+      if (awaiting) throw alreadyClassified(new Error(PROMISE_BOUND_MESSAGE));
+      throw hangingScriptError("clock");
+    }
+    // AC-12, the caller's abort: page JavaScript cannot be stopped from
+    // outside, so an aborted call with the caller's own script still in flight
+    // may have left the engine wedged. An awaited call is exempt for the same
+    // reason the clock exempts it.
+    if (inflight === "caller" && !awaiting && cancelled(error)) {
+      throw hangingScriptError("abort");
+    }
+    throw error;
   }
 }
 
@@ -432,35 +476,32 @@ export async function waitForMatch(
   const { mode, watched } = resolveMode(options);
   const { timeoutMs, notes } = resolveTimeout(options.timeoutMs);
   const expression = pollExpression(mode, watched);
-  const started = Date.now();
-  // AC-7: the poll loop stops at the smaller of the wait's own clock and the
-  // tool clock minus the reserve, so the final snapshot and the queue release
-  // still fit inside the tool clock.
-  const deadline = started + Math.min(timeoutMs, TOOL_TIMEOUT_MS - WAIT_RESERVE_MS);
 
   let appeared = false;
   let failedTicks = 0;
   let lastFailure = "";
-  // AC-12: whether a page evaluation was still outstanding when the tool clock
-  // expired. A tick and the final snapshot both run through tracked, whose
-  // finally clears the flag only once the call came back, so a poll the page
-  // never returns from leaves it true and the engine is treated as down.
-  let outstanding = false;
-  const tracked = async <T>(body: () => Promise<T>): Promise<T> => {
-    outstanding = true;
-    try {
-      return await body();
-    } finally {
-      outstanding = false;
-    }
-  };
+  // AC-12: the page work still outstanding when this wait ended, and who
+  // authored it. The condition tick is the caller's own JavaScript, so it can
+  // loop; a text or selector tick and the final snapshot are the plugin's own
+  // expressions, which cannot.
+  const page = trackPageWork();
+  const tickOwner = mode === "condition" ? "caller" : "plugin";
 
   try {
     return await runOp("the wait", signal, async () => {
+      // AC-7: the wait's own clock starts when polling starts, not when the call
+      // was made, so time spent queued behind another browser call is not
+      // charged against it and the reported elapsed time is the poll loop's.
+      const started = Date.now();
+      // AC-7: the poll loop stops at the smaller of the wait's own clock and the
+      // tool clock minus the reserve, so the final snapshot and the queue
+      // release still fit inside the tool clock.
+      const deadline = started + Math.min(timeoutMs, TOOL_TIMEOUT_MS - WAIT_RESERVE_MS);
+
       while (true) {
         if (signal?.aborted) throw new Error(CANCELLED_MESSAGE);
         try {
-          appeared = await tracked(() => pollOnce(handle, expression));
+          appeared = await page.run(tickOwner, () => pollOnce(handle, expression));
           failedTicks = 0;
         } catch (error) {
           const detail = errorText(error);
@@ -482,7 +523,7 @@ export async function waitForMatch(
       }
 
       const elapsedMs = Date.now() - started;
-      const fresh = await tracked(() => snapshotRefs(handle, signal));
+      const fresh = await page.run("plugin", () => snapshotRefs(handle, signal));
       const finalNotes = [...notes];
       if (!appeared && mode === "selector") {
         finalNotes.push(
@@ -502,10 +543,17 @@ export async function waitForMatch(
       };
     });
   } catch (error) {
-    // AC-12: a page evaluation still outstanding at the clock means the engine
-    // is treated as down and the next browser call starts a fresh one. A wait
-    // never awaits a promise, so no case here is exempt.
-    if (!outstanding || !timedOutAtTheClock(error)) throw error;
-    throw hangingScriptError();
+    const inflight = page.outstanding();
+    // Nothing was in flight, so this is the wait's own failure and it stands.
+    if (!inflight) throw error;
+    // AC-12, the tool clock: the engine is not answering, so it is treated as
+    // down and the next browser call starts a fresh one. A wait never awaits a
+    // promise, so no case here is exempt.
+    if (timedOutAtTheClock(error)) throw hangingScriptError("clock");
+    // AC-12, the caller's abort: only the caller's own condition expression can
+    // have looped and left the engine wedged. Aborting a text or selector wait
+    // stays a plain cancellation, which is what keeps the escape hatch cheap.
+    if (inflight === "caller" && cancelled(error)) throw hangingScriptError("abort");
+    throw error;
   }
 }
