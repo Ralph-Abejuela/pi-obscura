@@ -18,7 +18,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
 | 7 | Interaction tools | Slice 2 | done |
-| 8 | Script & wait | Slice 3 | in-progress (designed) |
+| 8 | Script & wait | Slice 3 | in-progress (building) |
 
 ## Foundations
 
@@ -109,15 +109,15 @@ spec [0006](../specs/0006-interaction-tools/index.md) · code in src/
 
 ### 8. Script & wait
 Run your own JavaScript in the page and synchronize with changing content before reading on.
-spec [0007](../specs/0007-script-and-wait/index.md)
+spec [0007](../specs/0007-script-and-wait/index.md) · code in src/ (script.ts, index.ts, interact.ts)
 **Done when:** the agent can evaluate JS on the page and pause until text or a condition appears, then read the result.
 - [x] Design it (spec): `/architect script & wait`
-- [ ] Build it: `/develop script & wait`
-  - [ ] Eval core, end to end · AC-1, AC-4
-  - [ ] Await and the ref form · AC-2, AC-3
-  - [ ] Wait, text mode, end to end · AC-5, AC-6, AC-7, AC-8, AC-9, AC-10
-  - [ ] Selector and condition modes · AC-5, AC-6, AC-11
-  - [ ] Hang recovery and the self check · AC-11, AC-12, AC-13
+- [x] Build it: `/develop script & wait`
+  - [x] Eval core, end to end · AC-1, AC-4
+  - [x] Await and the ref form · AC-2, AC-3
+  - [x] Wait, text mode, end to end · AC-5, AC-6, AC-7, AC-8, AC-9, AC-10
+  - [x] Selector and condition modes · AC-5, AC-6, AC-11
+  - [x] Hang recovery and the self check · AC-11, AC-12, AC-13
 - [ ] Verify it: `/check verify script & wait`
 
 ## Deferred

@@ -99,7 +99,7 @@ export interface KeyOptions {
 // AC-2: a ref is resolved against the snapshot taken at the start of the
 // action, never against an older read silently. A ref the current snapshot
 // does not hold is refused in plain words.
-function findFreshRef(ref: number, refs: ReadRef[]): ReadRef {
+export function findFreshRef(ref: number, refs: ReadRef[]): ReadRef {
   const found = refs.find((r) => r.ref === ref);
   if (!found) {
     throw new Error(
@@ -123,7 +123,7 @@ function assertTextLike(target: ReadRef, action: string): void {
 
 // DOM.resolveNode hands a backend node id to Runtime.callFunctionOn, the
 // evaluate path every side operation uses.
-async function objectForNode(handle: EngineHandle, backendNodeId: number): Promise<string> {
+export async function objectForNode(handle: EngineHandle, backendNodeId: number): Promise<string> {
   const resolved = (await send(handle, "DOM.resolveNode", {
     backendNodeId,
   })) as { object?: { objectId?: string } };

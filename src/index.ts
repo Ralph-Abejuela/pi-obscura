@@ -18,6 +18,7 @@ import {
 } from "./config.js";
 import { InstallError, installObscura } from "./installer.js";
 import { chooseRef, clickRef, fillRef, keyPress, scrollPage, typeRef } from "./interact.js";
+import { evalInPage, waitForMatch } from "./script.js";
 import { createEngineSupervisor } from "./supervisor.js";
 
 function errorText(error: unknown): string {
@@ -39,6 +40,15 @@ function errorResult(error: unknown): ToolResult {
 function navMessage(report: NavReport, action: string): string {
   const where = report.title ? `${report.title} (${report.url})` : report.url;
   return `${action} ${where}.`;
+}
+
+// The status line label a wait writes for its duration: the one mode it is
+// watching and the literal it was given (spec 0007 AC-10).
+function watchingLabel(params: { text?: string; selector?: string; condition?: string }): string {
+  if (params.text !== undefined) return `text "${params.text}"`;
+  if (params.selector !== undefined) return `selector ${params.selector}`;
+  if (params.condition !== undefined) return `condition ${params.condition}`;
+  return "nothing";
 }
 
 export default function (pi: ExtensionAPI) {
@@ -598,6 +608,107 @@ export default function (pi: ExtensionAPI) {
         });
       } catch (error) {
         return errorResult(error);
+      }
+    },
+  });
+
+  // The script and wait tools (feature 8, spec 0007). These are the only two
+  // tools that run caller authored JavaScript in the page, so each result says
+  // plainly what the engine did with it: a degraded value is named rather than
+  // dumped, a page error is the page's own message, and a wait that ran out of
+  // time is honest data rather than a broken call.
+  pi.registerTool({
+    name: "browser_eval",
+    label: "Run JavaScript in the page",
+    description:
+      "Run your own JavaScript in the page and report the value it produced with its type. The " +
+      "expression is a script, so its completion value comes back (`1 + 1` gives 2, " +
+      "`const a = 1; a + 1` gives 2). Pass ref to run the expression as the body of a function " +
+      "with that element as `this`, where a value needs `return` (`return this.textContent`). " +
+      "Set await to true to wait for a promise result, bounded at 30 seconds by the engine " +
+      "itself. A DOM element, a Promise, a Map, and a Set are reported in plain words, never " +
+      "dumped.",
+    promptSnippet: "Run JavaScript in the page and read the value",
+    promptGuidelines: [
+      "Pass a ref from the latest read; with a ref the expression is a function body, so a value needs return.",
+      "Set await: true for a promise result; without it a promise reads as an empty object.",
+      "A page error arrives as the page's own message, so fix the expression and call again.",
+    ],
+    parameters: Type.Object({
+      expression: Type.String(),
+      ref: Type.Optional(Type.Number()),
+      await: Type.Optional(Type.Boolean()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          evalInPage(
+            handle,
+            { expression: params.expression, ref: params.ref, await: params.await },
+            signal,
+          ),
+        );
+        const lines = [`The script returned ${report.type}: ${report.value}`];
+        if (report.note) lines.push(report.note);
+        lines.push(`Now at ${where(report)}.`);
+        return toolResult(lines.join("\n"), report);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_wait",
+    label: "Wait for text, an element, or a condition",
+    description:
+      "Pause until exactly one of these appears: text (a literal case sensitive substring of " +
+      "the page's text), selector (a CSS selector that matches an element), or condition (your " +
+      "own JavaScript expression whose completion value is truthy). It polls every 100 ms for " +
+      "up to timeoutMs (default 10000, clamped to 500 to 25000). A wait that runs out of time " +
+      "is a normal result with appeared: false, where the page is now, and fresh refs, never an " +
+      "error. The wait holds the browser queue while it polls, so no other browser call " +
+      "interleaves.",
+    promptSnippet: "Wait for text, a selector, or a condition",
+    promptGuidelines: [
+      "Pass exactly one of text, selector, or condition.",
+      "A text match is text anywhere in the document, hidden and offscreen text included; this engine cannot test visibility.",
+    ],
+    parameters: Type.Object({
+      text: Type.Optional(Type.String()),
+      selector: Type.Optional(Type.String()),
+      condition: Type.Optional(Type.String()),
+      timeoutMs: Type.Optional(Type.Number()),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // AC-10: the status line names what the wait is watching for its whole
+      // duration, then goes back to the engine's own state text.
+      const watching = watchingLabel(params);
+      ctx.ui.setStatus("browser", `waiting for ${watching}`);
+      try {
+        const report = await engine.runExclusive(signal, (handle) =>
+          waitForMatch(
+            handle,
+            {
+              text: params.text,
+              selector: params.selector,
+              condition: params.condition,
+              timeoutMs: params.timeoutMs,
+            },
+            signal,
+          ),
+        );
+        const waited = `Waited ${(report.elapsedMs / 1000).toFixed(1)}s for ${report.mode} ${report.watched}`;
+        const verdict = report.appeared
+          ? ". It appeared."
+          : ". It never appeared; read the page to see what is there, or wait again with a longer timeoutMs.";
+        const lines = [`${waited}${verdict} Now at ${where(report)}.`];
+        for (const note of report.notes) lines.push(note);
+        return toolResult(lines.join("\n"), report);
+      } catch (error) {
+        return errorResult(error);
+      } finally {
+        ctx.ui.setStatus("browser", engine.statusText());
       }
     },
   });
