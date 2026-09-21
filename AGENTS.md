@@ -33,6 +33,9 @@ node node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti-cli
 
 # Interaction self check (the six action tools, the refusal cases, and the recorded engine limits)
 node node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti-cli.mjs scripts/interaction-selfcheck.ts
+
+# Script and wait self check (browser_eval, browser_wait, the wedge recovery cases, and the queue discipline)
+node node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti-cli.mjs scripts/script-selfcheck.ts
 ```
 
 ## Specs
@@ -52,13 +55,15 @@ Stored in `docs/specs/`. Format: `docs/specs/NNNN-title/` with index, rationale,
 - Public APIs are documented: every exported symbol a tool or another module calls carries a short plain comment on what it does and when it fails.
 - Strict TypeScript: tsconfig strict, no any.
 - Engine behaviour is probe verified, never assumed: throwaway probes live in the gitignored `scratch/`, and each verified engine limit is recorded in the owning spec's rationale probe record.
+- Browser tools share one queue: every browser operation runs through the supervisor's `engine.runExclusive` with the shared 30 second tool clock and the caller's abort signal, and no tool sends a CDP call around it.
+- An element ref is only valid against the snapshot that produced it: resolve it through the fresh snapshot helper, and refuse a ref the current snapshot does not hold in plain words. Ref numbers are per page and are reused, so a ref is never compared across pages.
 
 ## Tooling
 
 - Lint and format: Biome 2.x (biome.json: 2-space indent, line width 100, double quotes, no default exports except the pi entry point in src/index.ts). Run `npm run lint`, `npm run format`, or `npm run fix` to auto-apply.
 - Pre commit: `scripts/git-hooks/pre-commit` runs lint, format, and typecheck on every commit (hooked via `core.hooksPath`, set by npm install). Fail with `npm run fix`, then re-commit.
 - Testing gate: typecheck clean plus a real /check verify pass proves a feature; no test suite by default (Alpha).
-- CI: none yet, the repo has no remote. Add a push based job when a remote exists.
+- CI: none yet. The repo now has a remote, so a push based job can be added.
 
 ## Agent skills
 
@@ -71,6 +76,7 @@ Declined: pi-coding-agent, pi-package-authoring, typescript-advanced-types, node
 - integration: on (one branch per feature, PR driven)
 - branch prefix: feat/
 - commit: per-milestone
+- remote: origin (github.com/Ralph-Abejuela/pi-obscura), reached through the `github_work` SSH alias with the ralph_id_ed25519 key, which prompts for its passphrase on every fetch and push, so run those in an interactive PTY. The default branch is `master`.
 
 ## Context files
 
