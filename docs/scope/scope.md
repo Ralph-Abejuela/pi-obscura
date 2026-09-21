@@ -17,7 +17,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 4 | Obscura binary helper | Slice 1 | done |
 | 5 | Server lifecycle | Slice 1 | done |
 | 6 | Core navigation & reading | Slice 1 | done |
-| 7 | Interaction tools | Slice 2 | planned |
+| 7 | Interaction tools | Slice 2 | in-progress (designed) |
 | 8 | Script & wait | Slice 3 | planned |
 
 ## Foundations
@@ -94,8 +94,16 @@ spec [0004](../specs/0004-core-navigation-and-reading/index.md) · code in src/ 
 
 ### 7. Interaction tools
 Act on the page the way a person would: click, fill, type, choose, scroll, and keep the agent's element references honest after each action.
+spec [0006](../specs/0006-interaction-tools/index.md) · code in src/
 **Done when:** the agent can complete a multi step flow, like searching, filling a form, and submitting it, with element references refreshed after each action.
+- [x] Design it (spec): `/architect interaction tools`
 - [ ] Build it: `/develop interaction tools`
+  - [ ] Refs contract and action core · AC-2, AC-6
+  - [ ] Click strand · AC-1, AC-2, AC-7
+  - [ ] Fill, type, and keys · AC-3, AC-4, AC-7
+  - [ ] Choose and scroll · AC-5, AC-6, AC-7
+  - [ ] Tool wiring and self check · AC-1, AC-3, AC-4, AC-5, AC-8, AC-9
+- [ ] Verify it: `/check verify interaction tools`
 
 ## Slice 3: reach in and wait
 
