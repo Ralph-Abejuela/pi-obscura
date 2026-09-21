@@ -1,5 +1,5 @@
 {
-  "name": "obscura-agent",
+  "name": "pi-obscura",
   "version": "0.1.0",
   "description": "A pi extension that gives the agent a real browsing engine through the Obscura headless browser",
   "private": true,

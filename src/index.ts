@@ -1,5 +1,5 @@
 // src/index.ts
-// Entry point for the obscura-agent pi extension.
+// Entry point for the pi-obscura extension.
 // Registers the browser_probe tool and the /browser-status command against the
 // persistent engine supervisor (spec 0003), and keeps the pi status line honest
 // about the engine across sessions and reloads. The install surfaces

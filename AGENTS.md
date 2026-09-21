@@ -1,4 +1,4 @@
-# Obscura agent
+# pi-obscura
 
 ## Stack
 
@@ -51,7 +51,7 @@ Stored in `docs/specs/`. Format: `docs/specs/NNNN-title/` with index, rationale,
 - Use map, filter, reduce over imperative loops; avoid null, prefer explicit undefined in union types.
 - Expected failures return a tagged error; the error mapper turns CDP errors into four plain categories (engine down, page error, protocol unsupported, timeout), each with a next step.
 - Named exports only, no default exports.
-- Tools use the browser_ prefix; src organizes into feature folders as slices land.
+- Tools use the browser_ prefix; src is flat, one module per slice (`browser.ts` for navigation and reading, `interact.ts` for the action tools, `script.ts` for the script and wait tools) beside the shared edges (`supervisor.ts`, `engine.ts`, `config.ts`, `installer.ts`) and the pi entry point in `index.ts`.
 - Public APIs are documented: every exported symbol a tool or another module calls carries a short plain comment on what it does and when it fails.
 - Strict TypeScript: tsconfig strict, no any.
 - Engine behaviour is probe verified, never assumed: throwaway probes live in the gitignored `scratch/`, and each verified engine limit is recorded in the owning spec's rationale probe record.
